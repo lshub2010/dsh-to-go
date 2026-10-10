@@ -20,12 +20,13 @@ const path = require('path');
 const readline = require('readline');
 const { spawn } = require('child_process');
 const secretLib = require('./secret.js');
+const sitesLib = require('./sites.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const RUNTIME = path.join(ROOT, 'runtime');
 const NODE_DIR = path.join(RUNTIME, 'node');
 const NODE_EXE = path.join(NODE_DIR, 'node.exe');
-const DATA = path.join(ROOT, 'data');
+const DATA = process.env.WZD_DATA_DIR || path.join(ROOT, 'data');
 const AGENTS_HOME = path.join(DATA, 'agents');
 const TMP = path.join(RUNTIME, 'tmp');
 const PORT_FILE = path.join(RUNTIME, 'port.txt');
@@ -113,34 +114,118 @@ function fail(msg) {
   process.exit(1);
 }
 
+/** 插件启停状态（插件页维护；还没有这个文件就等于都没停用）。 */
+function readDisabledPlugins() {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(DATA, 'plugins.json'), 'utf8'));
+    return Array.isArray(j.disabled) ? j.disabled : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+/** 覆盖层始终由 data\sites.json 生成；启动前刷新一次，失败也不能挡住启动。 */
+function refreshOverlay() {
+  try {
+    const st = sitesLib.readState();
+    if (!st.sites.length) return null;
+    return sitesLib.writeOverlay(st, { disabled: readDisabledPlugins() }).overlay;
+  } catch (e) {
+    log('overlay refresh failed: ' + e.message);
+    return null;
+  }
+}
+
+/**
+ * 这次启动该给子进程注入哪些环境变量名（只看站点表，不涉及密钥值）。
+ * 没有站点表（老配置）时沿用单密钥变量名。
+ */
+function plannedEnvNames() {
+  const st = sitesLib.readState();
+  const enabled = st.sites.filter((s) => s.enabled !== false);
+  if (enabled.length) return enabled.map((s) => s.keyEnv);
+  return [secretLib.keyName()];
+}
+
 async function resolveKey(env, opts) {
   if (opts.noKey) return env;
+  const names = plannedEnvNames();
+
+  // 逃生口：直接给值（脚本/测试用），不落盘
   if (process.env.WZD_KEY) {
-    env[process.env.WZD_KEY_NAME || secretLib.keyName()] = process.env.WZD_KEY;
-    console.log('【启动器】密钥来自 WZD_KEY 环境变量');
+    const n = process.env.WZD_KEY_NAME || names[0] || secretLib.keyName();
+    env[n] = process.env.WZD_KEY;
+    console.log('【启动器】密钥来自 WZD_KEY 环境变量（变量名 ' + n + '）');
     return env;
   }
+
   const file = secretLib.secretFile();
-  if (!fs.existsSync(file)) {
+  const legacy = secretLib.legacyFile();
+  if (!fs.existsSync(file) && !fs.existsSync(legacy)) {
     console.log('\n【启动器】还没有配置加密密钥：' + file);
     console.log('【启动器】dsh 仍会启动，但模型请求会以 MISSING_CREDENTIAL 失败。');
-    console.log('【启动器】请运行 dsh-config.cmd → 5) key 设置/更换密钥。');
+    console.log('【启动器】请运行 dsh-config.cmd → 5) key，或用 dsh-ui.cmd 打开图形配置页。');
     const a = (await ask('无密钥继续启动？[Y/n] ')).toLowerCase();
     if (a === 'n' || a === 'no') process.exit(0);
     return env;
   }
+
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const r = secretLib.unlock({ file });
+    let pass;
+    try {
+      pass = secretLib.promptPass('U 盘密钥口令');
+    } catch (e) {
+      fail(e.message + '\n【启动器】提示：请从 cmd 窗口双击运行 dsh.cmd（或在图形界面里启动），掩码口令提示才会出现。');
+    }
+
+    // v2：一个文件多站点密钥
+    if (secretLib.readStore(file)) {
+      const r = secretLib.unlockAll(pass, file);
+      if (r.ok) {
+        const missing = [];
+        let injected = 0;
+        for (const name of names) {
+          const meta = r.meta.find((m) => m.keyName === name) ||
+            r.meta.find((m) => m.siteId === String(name).replace(/_API_KEY$/, '').toLowerCase());
+          if (meta && r.keys[meta.siteId] != null) { env[name] = r.keys[meta.siteId]; injected++; }
+          else missing.push(name);
+        }
+        // 补齐：新密钥库还没存的站点，看看旧的单密钥文件里有没有同一把钥匙
+        // （否则「新存了一个站点」会让旧密钥突然失效——那是很难排查的坑）
+        let filledFromLegacy = 0;
+        if (missing.length && fs.existsSync(legacy)) {
+          const lr = secretLib.unlock({ file: legacy, pass });
+          if (lr.ok && lr.keyName && missing.indexOf(lr.keyName) >= 0) {
+            env[lr.keyName] = lr.secret;
+            filledFromLegacy++;
+            missing.splice(missing.indexOf(lr.keyName), 1);
+          }
+        }
+        console.log('【启动器】密钥已解锁：' + injected + ' 个站点注入成功（' + names.join('、') + '）' +
+          (filledFromLegacy ? '，另有 ' + filledFromLegacy + ' 个沿用旧密钥文件' : ''));
+        if (missing.length) {
+          console.log('【启动器】没有这几个站点的密钥：' + missing.join('、') + '（这些站点会以 MISSING_CREDENTIAL 失败）');
+        }
+        if (filledFromLegacy || (missing.length && fs.existsSync(legacy))) {
+          console.log('【启动器】建议在图形配置页里把旧密钥导入新密钥库，之后就能只维护一个文件。');
+        }
+        log('keys unlocked injected=' + injected + ' legacy=' + filledFromLegacy + ' names=' + names.join(','));
+        return env;
+      }
+      console.log('\n【启动器】口令错误（' + attempt + '/3）');
+      continue;
+    }
+
+    // 旧版单密钥文件：照旧注入，并提示可以迁移
+    const r = secretLib.unlock({ file: legacy, pass });
     if (r.ok) {
       env[r.keyName] = r.secret;
       console.log('【启动器】密钥已解锁（' + r.keyName + '，' + r.secret.length + ' 字符，仅存在于内存）');
-      log('key unlocked name=' + r.keyName);
+      console.log('【启动器】想用多站点密钥库可在图形配置页里迁移（旧文件不会被删）。');
+      log('legacy key unlocked name=' + r.keyName);
       return env;
     }
     if (r.reason === 'missing') return env;
-    if (r.reason === 'noprompt') {
-      fail(r.error + '\n【启动器】提示：请从 cmd 窗口双击运行 dsh.cmd，掩码口令提示才会出现。');
-    }
     console.log('\n【启动器】口令错误（' + attempt + '/3）');
   }
   fail('连续 3 次口令错误，已中止启动。');
@@ -153,8 +238,9 @@ async function main() {
 
   if (mode === 'keycheck') {
     const env = await resolveKey(buildEnv(), {});
-    const name = secretLib.keyName();
-    const probe = 'console.log(process.env[' + JSON.stringify(name) + '] ? ("子进程已收到 " + ' + JSON.stringify(name) + ' + "（长度 " + process.env[' + JSON.stringify(name) + '].length + "）") : "子进程未收到 ' + name + '")';
+    const names = plannedEnvNames();
+    const probe = 'const n=' + JSON.stringify(names) + ';' +
+      'console.log(n.map(function (x) { return x + ": " + (process.env[x] ? ("子进程已收到，长度 " + process.env[x].length) : "子进程未收到"); }).join("\\n"));';
     const r = require('child_process').spawnSync(NODE_EXE, ['-e', probe], { env, encoding: 'utf8' });
     process.stdout.write(String(r.stdout || ''));
     return r.status === 0 ? 0 : 1;
@@ -170,7 +256,19 @@ async function main() {
     console.log('数据目录   : ' + DATA);
     console.log('网页端口   : ' + readPort());
     console.log('密钥文件   : ' + (fs.existsSync(key) ? key + '（已配置）' : key + '（未配置）'));
-    console.log('密钥变量名 : ' + secretLib.keyName());
+    const legacy = secretLib.legacyFile();
+    if (fs.existsSync(legacy)) console.log('旧密钥文件 : ' + legacy + '（可迁移，未被删）');
+    try {
+      const items = secretLib.listKeys();
+      console.log('已存站点密钥: ' + (items.length ? items.map((x) => x.siteId + '(' + (x.length || '?') + '字符)').join('、') : '（无）'));
+    } catch (e) { /* 没有密钥库 */ }
+    const st = sitesLib.readState();
+    const enabled = st.sites.filter((s) => s.enabled !== false);
+    console.log('站点       : ' + (st.sites.length ? st.sites.length + ' 个（启用 ' + enabled.length + ' 个）：' +
+      st.sites.map((s) => s.id + (s.enabled === false ? '×' : '')).join('、') : '（未配置，走 dsh 默认）'));
+    console.log('默认模型   : ' + (st.default ? st.default.siteId + ' / ' + st.default.model : '（未设置）'));
+    console.log('注入变量名 : ' + plannedEnvNames().join('、'));
+    console.log('停用插件   : ' + (readDisabledPlugins().length ? readDisabledPlugins().join('、') : '（无）'));
     console.log('站点覆盖层 : ' + (fs.existsSync(OVERLAY) ? OVERLAY + '（会作为 --patch 传给 dsh）' : '未配置'));
     console.log('临时目录   : ' + tempRoot(process.env) + (fs.existsSync(path.join(RUNTIME, 'usb-temp.txt')) ? '（在 U 盘上：ACL 沙箱可能失败）' : '（宿主，推荐）'));
     return 0;
@@ -201,6 +299,8 @@ async function main() {
 
   fs.mkdirSync(DATA, { recursive: true });
   fs.mkdirSync(TMP, { recursive: true });
+  const overlay = refreshOverlay();
+  if (overlay) log('overlay refreshed: ' + overlay);
 
   const env = await resolveKey(buildEnv(), { noKey: argv.includes('--no-key') });
   const label = '活动槽 ' + slot + ' ｜ dsh ' + dshVersion(slot) + ' ｜ 数据目录 ' + DATA;
@@ -220,4 +320,12 @@ async function main() {
   return -1; // keep the event loop alive until the child exits
 }
 
-main().then((rc) => { if (rc >= 0) process.exit(rc); }).catch((e) => fail(e.message));
+module.exports = {
+  ROOT, RUNTIME, DATA, NODE_EXE, OVERLAY,
+  readSlot, readPort, dshBin, dshVersion, buildEnv, tempRoot,
+  plannedEnvNames, readDisabledPlugins, refreshOverlay,
+};
+
+if (require.main === module) {
+  main().then((rc) => { if (rc >= 0) process.exit(rc); }).catch((e) => fail(e.message));
+}

@@ -1,0 +1,133 @@
+# dsh-to-go 图形化改造蓝图（v2 界面）
+
+目标：把「一个统一的 Web 入口」做成主要的操作面。首次引导之后，版本安装、站点、密钥、模型、升级、插件、诊断全部在浏览器里完成；`.cmd` 只作为备用入口与真正的冷启动引导。
+
+本文档是**每一棒的自包含交接材料**：任何一棒只读本文档 + 相关源码即可开工。
+
+---
+
+## 0. 已冻结的设计决策
+
+| 决定 | 结论 | 原因 |
+|---|---|---|
+| 口令模型 | 打开配置页时输入一次，**只存在于服务进程内存**，不落盘 | 盘丢了也解不开密钥；不做「记住口令」 |
+| 首次引导 | `build.cmd` 只下载并校验便携 Node → 自动打开浏览器 → 其余全部在网页向导里 | 网页服务本身是 Node 程序，没有 Node 就起不了 |
+| 插件维护 | 按 **profile**（`data\profiles\<名>`），不是按 A/B 槽：列条目 + 启停（`disabled` 覆盖）+ 安装/卸载（`dsh plugin … `） | A/B 是两套 dsh 代码，共享同一个 `data\`；插件条目挂在 profile 上 |
+| 站点语义 | **多站点可同时启用**，每站点一个 provider；每站点独立密钥；变量名自动 `<站点ID>_API_KEY` | 用户拍板：模型列表多来源可接受 |
+| 互斥 | dsh 运行中禁止升级/插件/换槽操作（页面明确提示） | 避免半装状态与文件占用 |
+| 所有权边界 | `data\profiles\*\cordis.patch.yml` 永远归 dsh 与其 Web UI；我们的东西一律写到自己的覆盖层 | 已经被坑过一次（受管块被夹进 UI 设置里） |
+
+## 1. 事实基础（实测，勿再猜）
+
+- `dsh --profile web --dump-config` 组合出完整配置树；`--patch <file>` 在其后叠加，**同 `id` 的条目互相覆盖**（patch 的 `config` 是**整块替换**）。
+- 条目 schema 含 **`disabled`** 字段（布尔或 `!!js` 表达式）→ 停用插件靠它。**已实测**：从 `--patch` 覆盖层写 `disabled: true` 生效，且能与 `config` 覆盖同时写；`--dump-config` 把它打印在 `config` 之后（看输出时别只截前几行）。
+- **基础层没有 `providers:` 段**（`--dump-default-config` 里搜不到）→ provider 全部由我们的覆盖层定义，不存在「覆盖掉官方 provider」的风险。
+- 一个覆盖层条目里可以放**多个站点**（`config.providers.<id>`），两个站点并存已实测。
+- 插件包 = `@deepseek-ai/*`（当前树里 299 个），基础层来自 `dsh.profile.bundles`（`dsh-base`、`dsh-web-app`），每个 bundle 自带 `cordis.patch.yml`。
+- `dsh plugin --profile <name> <pnpm 参数>` 把参数转发给 pnpm，作用目录是 profile 目录。
+- 参数顺序坑：启动器标记不能放在裸命令名之前（`--patch f web` → `error: --profile <name> is required`）。
+- 密钥注入只走**进程内**环境变量（`set`，绝不 `setx`）。
+- `data\` 里的可统计状态：`sessions\<工作区>\session-*`、`storages\`、`logs\`、`profiles\`。
+- 沙箱临时目录默认放宿主（盘上 ACL 缺 `WRITE_OWNER` 会让 `workspace-write` 失败）。
+- **`secrets\key-name.txt` 这个「全局单名覆盖」在多站点下必须废弃**：它会盖掉每把密钥自己记的变量名，导致旧密钥以错误的变量名注入（实测踩到）。变量名的唯一来源是密钥自身的 `key_name`（回落到站点表的 `keyEnv`）。
+
+## 2. 数据与文件布局
+
+```
+data\sites.json          多站点定义（本工具的，不是 dsh 的）
+data\site-patch.yml      生成出来的覆盖层（N 个 provider + 默认模型 + 插件启停）
+data\jobs\<id>.json      后台任务状态（安装/升级/卸载/插件操作）
+data\jobs\<id>.log       后台任务日志（增量读取用）
+secrets\keys.enc         多站点密钥（单文件、同一口令加密）+ 口令校验器
+runtime\{current.txt,port.txt,npm-cache,agent-A,agent-B,node}
+```
+
+### sites.json
+
+```json
+{
+  "version": 1,
+  "default": { "siteId": "ibao", "model": "cn:deepseek-v4.1-flash" },
+  "sites": [
+    {
+      "id": "ibao", "name": "朋友的网关", "baseURL": "https://wb2api.ibax.cn/v1",
+      "api": "openai-completions", "enabled": true,
+      "keyEnv": "IBAO_API_KEY",
+      "compat": { "supportsDeveloperRole": false, "maxTokensField": "max_tokens" },
+      "models": [ { "id": "cn:deepseek-v4.1-flash", "image": false } ],
+      "updated": "…"
+    }
+  ]
+}
+```
+
+- `id` 唯一，正则 `^[a-z0-9][a-z0-9-]*$`；`keyEnv` 由 `id` 自动推导（大写、非字母数字转 `_`、数字开头补 `_`），可在界面里手动覆盖。
+- 同一站点可有多模型，逐模型 `image` 开关（视觉能力）。
+
+### keys.enc
+
+```json
+{
+  "version": 2, "algo": "aes-256-gcm", "kdf": "scrypt", "kdf_params": { "N": 16384, "r": 8, "p": 1 },
+  "verifier": { "salt": "…", "iv": "…", "tag": "…", "ct": "…" },
+  "keys": { "ibao": { "key_name": "IBAO_API_KEY", "salt": "…", "iv": "…", "tag": "…", "ct": "…", "length": 47, "created": "…" } },
+  "updated": "…"
+}
+```
+
+- `verifier` 加密的是固定串 `dsh-to-go:verify`，用它判断口令对不对，**不必解密任何密钥**。
+- 兼容旧文件 `secrets\model-key.enc` + `secrets\key-name.txt`：启动器/配置页拿到口令后自动迁移到 v2（迁移前旧文件照常可用）。
+
+## 3. 接口清单（服务端，全部要令牌 + 已登录）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/login` | 首次：设置口令（写 verifier）；之后：校验口令 → 建立会话（服务端内存里保存口令） |
+| POST | `/api/logout` | 清掉内存中的口令 |
+| GET | `/api/state` | 概览：槽位/版本/运行状态/端口/体积/磁盘/密钥与站点摘要/日志尾部 |
+| GET/POST | `/api/sites` | 读全部站点 / 增改站点（含 `enabled`、模型列表、`image` 勾选、`keyEnv`） |
+| POST | `/api/sites/delete` | 删除站点（连带其密钥） |
+| POST | `/api/sites/probe` | 用给定 `baseURL+key+协议` 探测 `/models`，返回候选模型列表 |
+| POST | `/api/models/default` | 设置默认（provider+model） |
+| GET/POST | `/api/keys` | 列出站点密钥状态 / 写入某站点密钥（用会话口令加密） |
+| POST | `/api/overlay/rebuild` | 重新生成覆盖层并跑 `--dump-config` 验收 |
+| POST | `/api/jobs/install` | 后台安装/升级：`{slot, version}` |
+| GET | `/api/jobs` | 任务列表与状态（含进度、阶段） |
+| GET | `/api/jobs/log` | `?id=…&from=N` 增量日志 |
+| POST | `/api/dsh/start` `/api/dsh/stop` | 启动/停止 dsh（口令从服务内存注入，不经命令行） |
+| GET | `/api/dsh/status` | dsh 是否在跑、PID、端口、token URL |
+| GET | `/api/plugins` | profile 条目列表（id/name/来源层/是否被禁用/是否第三方） |
+| POST | `/api/plugins/toggle` | 启停某条目（写 `disabled` 覆盖） |
+| POST | `/api/plugins/pnpm` | 安装/卸载（`dsh plugin --profile web add\|remove <pkg>`，走后台任务） |
+| POST | `/api/doctor` | 自检（结果结构化返回，供表格渲染） |
+
+## 4. 棒次与验收
+
+| 棒 | 范围 | 交付物 | 验收（必须有真实输出） |
+|---|---|---|---|
+| 1 ✅ | 数据层：`tools/sites.js`（多站点 CRUD + 覆盖层生成 + `/models` 探测）、`tools/secret.js` v2（多密钥 + verifier + 迁移）、启动器多站点注入 | 三个模块 + 3 个测试文件 | **已完成**：27/27 单测；e2e「一次口令注入两个站点（含自定义变量名）」通过；「v2 缺的用旧文件补齐」回归通过；图形页密钥接口 9 项通过 |
+| 2 | 后台任务引擎 `tools/jobs.js`：状态机、增量日志、互斥、失败回滚 | 模块 + 测试 | 1 个真实安装任务跑通；安装中其他接口仍可响应；失败可回滚 |
+| 3 | 前端骨架 + 概览页（启动/停止/打开 dsh、状态统计、互斥提示） | `ui/app.html`（+ 拆分样式）、服务端 dsh 控制接口 | 真启动：装好的包起 dsh → 页面显示运行中 → 停止后端口释放 |
+| 4 | 站点与模型页（多站点 CRUD、探测 `/models`、逐模型视觉、启用开关、默认模型） | 页面 + 接口 | 真探测一个网关；`--dump-config` 里出现全部启用站点 |
+| 5 | 升级页（快速升级 + A/B 各自版本） | 页面 + 接口 | 真装空闲槽 → 切指针 → 回滚可用 |
+| 6 | 诊断页（结构化自检表格、复制/导出） | 页面 + 接口 | 表格字段与 doctor 输出逐项一致 |
+| 7 | 插件页（列条目 + 启停 + 安装/卸载 + 运行中禁用） | 页面 + 接口 | 启停后 `--dump-config` 复验；装卸走真实 pnpm |
+| 8 | 首启向导 + 视觉收口（按 ui-ux-pro-max 的 Dark OLED 设计）+ 文档 + 推送 | 向导 + 文档 | 空目录：引导 → 向导走完全流程 → 起 dsh → 200 |
+
+每棒都必须：先写测试/先定义验收 → 实现 → 独立审查（找缺陷）→ 父代理实测（真启动或真安装，不看"代码看起来对"）。
+
+## 5. 视觉基线（ui-ux-pro-max 输出，实际采用部分）
+
+- 风格：Dark Mode (OLED)，深色优先；浅色不做默认。
+- 色板：底 `#0F172A`、卡片 `#1B2336`、主 `#1E293B`、边框 `#475569`、次要文字 `#94A3B8`、前景 `#F8FAFC`、强调/CTA `#22C55E`、危险 `#EF4444`。
+- 字体：界面 `IBM Plex Sans`，代码/ID/日志 `JetBrains Mono`（本地不联网时回落系统等宽）。
+- 动效：入场错落 300-450ms（`back.out(1.4)` 风格），必须尊重 `prefers-reduced-motion`。
+- 硬要求：图标用 SVG（不用 emoji）、点击元素 `cursor:pointer`、悬停 150-300ms 过渡、键盘焦点可见、对比度 ≥ 4.5:1、375/768/1024/1440 四档可用。
+- 弃用：该工具自动推荐的「FAQ 落地页版式」（与控制台无关）。
+
+## 6. 风险与回退
+
+- **装到一半拔盘**：任务状态在 `data\jobs\` 里，重开后可见失败原因；指针未切换即等于没升级。
+- **覆盖层写坏**：每次写前备份到 `backups\overlay-<时间>.yml`，并提供「回滚到上一个覆盖层」。
+- **口令遗忘**：无法找回（这是设计目标）；界面明确提示，并允许「删除全部密钥重设」。
+- **旧包兼容**：`secret.js` 保持读取旧 `model-key.enc` 的能力，直到迁移完成。

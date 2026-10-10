@@ -122,11 +122,24 @@ function state() {
   const other = otherSlot();
   const site = (() => { try { return JSON.parse(fs.readFileSync(siteLib.STATE, 'utf8')); } catch (e) { return null; } })();
   const keyFile = secretLib.secretFile();
-  let keyMeta = null;
-  try {
-    const blob = JSON.parse(fs.readFileSync(keyFile, 'utf8'));
-    keyMeta = { configured: true, created: blob.created || null, algo: blob.algo + ' / ' + blob.kdf, bytes: fs.statSync(keyFile).size };
-  } catch (e) { keyMeta = { configured: false }; }
+  const legacyKeyFile = secretLib.legacyFile();
+  let keyMeta;
+  const keyStore = secretLib.readStore(keyFile);
+  if (keyStore) {
+    const items = secretLib.listKeys();
+    keyMeta = {
+      configured: items.length > 0, store: 'v2', verifier: !!keyStore.verifier,
+      algo: (keyStore.algo || '') + ' / ' + (keyStore.kdf || ''), bytes: fs.statSync(keyFile).size,
+      created: keyStore.updated || null, sites: items,
+    };
+  } else if (fs.existsSync(legacyKeyFile)) {
+    try {
+      const blob = JSON.parse(fs.readFileSync(legacyKeyFile, 'utf8'));
+      keyMeta = { configured: true, store: 'legacy', created: blob.created || null, algo: blob.algo + ' / ' + blob.kdf, bytes: fs.statSync(legacyKeyFile).size, sites: [] };
+    } catch (e) { keyMeta = { configured: false, store: null, sites: [] }; }
+  } else {
+    keyMeta = { configured: false, store: null, sites: [] };
+  }
   return {
     root: ROOT,
     slot: { active: cur, activeVersion: dshVersion(cur), idle: other, idleVersion: dshVersion(other) },
@@ -201,18 +214,40 @@ async function handleApi(req, res, url) {
       const key = String(body.key || '');
       if (!pass) return send(400, { error: '口令不能为空' });
       if (!key) return send(400, { error: '密钥不能为空' });
-      if (body.keyEnv) secretLib.setKeyName(String(body.keyEnv));
-      const enc = secretLib.encrypt(key, pass);
-      const f = secretLib.secretFile();
-      fs.mkdirSync(path.dirname(f), { recursive: true });
-      fs.writeFileSync(f + '.tmp', JSON.stringify(enc, null, 2), 'utf8');
-      fs.renameSync(f + '.tmp', f);
-      return send(200, { ok: true, bytes: fs.statSync(f).size, keyName: secretLib.keyName(), length: key.length, state: state() });
+      const sitesLib2 = require('./sites.js');
+      const st = sitesLib2.readState();
+      let siteId = String(body.siteId || '').trim();
+      if (!siteId) {
+        const en = st.sites.filter((s) => s.enabled !== false);
+        siteId = (st.default && st.default.siteId) || (en.length === 1 ? en[0].id : 'default');
+      }
+      const site = st.sites.find((s) => s.id === siteId);
+      const keyName = String(body.keyEnv || (site && site.keyEnv) || '').trim();
+      try {
+        const r = secretLib.setKey(siteId, key, pass, keyName ? { keyName } : undefined);
+        return send(200, { ok: true, siteId: r.siteId, bytes: r.bytes, keyName: r.keyName, length: r.length, state: state() });
+      } catch (e) {
+        return send(400, { error: String(e && e.message || e) });
+      }
     }
 
     if (p === '/api/key/clear' && req.method === 'POST') {
-      try { fs.unlinkSync(secretLib.secretFile()); } catch (e) { /* already gone */ }
-      return send(200, { ok: true, state: state() });
+      const siteId = String(body.siteId || '').trim();
+      if (siteId) {
+        const removed = secretLib.removeKey(siteId);
+        return send(200, { ok: removed, removed, siteId, state: state() });
+      }
+      secretLib.destroyStore();
+      return send(200, { ok: true, destroyedAll: true, state: state() });
+    }
+
+    if (p === '/api/keys/migrate' && req.method === 'POST') {
+      const pass = String(body.pass || '');
+      if (!pass) return send(400, { error: '口令不能为空' });
+      const siteId = String(body.siteId || '').trim() || undefined;
+      const r = secretLib.migrateLegacy(pass, siteId);
+      if (!r.ok) return send(r.reason === 'badpass' ? 400 : 404, { ok: false, error: r.reason === 'badpass' ? '口令不对，无法解密旧密钥' : '没有可迁移的旧密钥文件' });
+      return send(200, { ok: true, siteId: r.siteId, keyName: r.keyName, length: r.length, state: state() });
     }
 
     if (p === '/api/port' && req.method === 'POST') {

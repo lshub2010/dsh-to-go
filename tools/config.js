@@ -133,13 +133,24 @@ function doctor() {
     ok('数据目录', DATA + '  （已用 ' + human(dirSize(DATA)) + '）');
   } catch (e) { bad('数据目录', '不可写：' + e.message); }
 
-  // 7. key store
-  if (fs.existsSync(SECRET_FILE)) {
-    const blob = JSON.parse(fs.readFileSync(SECRET_FILE, 'utf8'));
-    ok('加密密钥文件', blob.algo + ' / ' + blob.kdf + '，变量名 ' + (blob.key_name || secretLib.keyName()));
-    const raw = fs.readFileSync(SECRET_FILE, 'utf8');
+  // 7. key store（v2 多站点密钥库 + 旧的单密钥文件）
+  const v2File = secretLib.secretFile();
+  const legacyPath = secretLib.legacyFile();
+  const store = secretLib.readStore(v2File);
+  const legacyExists = fs.existsSync(legacyPath);
+  if (store) {
+    const items = secretLib.listKeys();
+    ok('密钥库 ' + path.basename(v2File), '口令校验器' + (store.verifier ? '已设置' : '未设置') +
+      '，站点密钥 ' + items.length + ' 个' + (items.length ? '（' + items.map((x) => x.siteId).join('、') + '）' : ''));
+    const raw = fs.readFileSync(v2File, 'utf8');
     if (/sk-[A-Za-z0-9_-]{8,}/.test(raw)) bad('密钥文件明文泄漏', '文件里能直接读到疑似密钥的字符串！');
-  } else warn('加密密钥文件', '未配置 —— 请到维护台选 5) key');
+    if (legacyExists) warn('旧的单密钥文件', path.basename(legacyPath) + ' 仍在（已被新密钥库取代，可留作回退或删除）');
+  } else if (legacyExists) {
+    const blob = JSON.parse(fs.readFileSync(legacyPath, 'utf8'));
+    ok('加密密钥文件（旧单密钥格式）', blob.algo + ' / ' + blob.kdf + '，变量名 ' + (blob.key_name || secretLib.keyName()));
+    const raw = fs.readFileSync(legacyPath, 'utf8');
+    if (/sk-[A-Za-z0-9_-]{8,}/.test(raw)) bad('密钥文件明文泄漏', '文件里能直接读到疑似密钥的字符串！');
+  } else warn('加密密钥文件', '未配置 —— 维护台 5) key 或图形配置页（dsh-ui.cmd）都可以设置');
 
   // 8. port availability
   let portTaken = false;
@@ -301,11 +312,31 @@ function switchSlot() {
   return 0;
 }
 
+/** 维护台要操作的站点：优先默认站点，其次唯一启用的站点；多站点又没默认站时不猜。 */
+function activeSiteId() {
+  try {
+    const st = require('./sites.js').readState();
+    if (st.default && st.default.siteId) return { id: st.default.siteId };
+    const en = st.sites.filter((s) => s.enabled !== false);
+    if (en.length === 1) return { id: en[0].id };
+    if (en.length > 1) return { id: null, count: en.length };
+  } catch (e) { /* 站点表还没建起来 */ }
+  return { id: null, count: 0 };
+}
+
 function setKey() {
-  console.log('  把模型密钥以 AES-256-GCM 密文写入 secrets/。');
-  console.log('  口令会问两遍，且不保存在任何地方；');
-  console.log('  忘记口令只需重新输入密钥，不会丢数据。');
-  const r = run(NODE_EXE, [path.join(__dirname, 'secret.js'), 'set'], { stdio: 'inherit' });
+  const site = activeSiteId();
+  if (site.count > 1 && !site.id) {
+    console.log('  你有多个启用的站点，维护台不猜密钥属于谁。');
+    console.log('  请用图形配置页（dsh-ui.cmd）逐个站点设置密钥，或先设好默认模型。');
+    return 1;
+  }
+  console.log('  把模型密钥以 AES-256-GCM 密文写入 secrets\\keys.enc（多站点密钥库）。');
+  console.log('  口令会问两遍，且不保存在任何地方；忘记口令只需重新输入密钥，不会丢数据。');
+  if (site.id) console.log('  这本密钥属于站点：' + site.id + '（变量名按站点表自动决定）');
+  const args = [path.join(__dirname, 'secret.js'), 'set'];
+  if (site.id) args.push('--site', site.id);
+  const r = run(NODE_EXE, args, { stdio: 'inherit' });
   return r.status === 0 ? 0 : 1;
 }
 
