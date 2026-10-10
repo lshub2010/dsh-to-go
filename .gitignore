@@ -1,0 +1,14 @@
+# ---- 构建产物：只在本机/本盘存在，不进仓库 ----
+runtime/
+data/
+secrets/
+backups/
+VERSION.txt
+
+# 密钥与备份
+*.enc
+*.key
+
+# 临时/调试
+tmp/
+*.log

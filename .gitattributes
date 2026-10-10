@@ -1,0 +1,10 @@
+# .cmd/.ps1 必须是 CRLF（cmd.exe 与 Windows PowerShell 5.1 都按行处理）
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 其余按 LF 存
+*.js   text eol=lf
+*.html text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.json text eol=lf
