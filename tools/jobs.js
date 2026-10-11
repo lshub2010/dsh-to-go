@@ -146,11 +146,17 @@ function reconcile() {
     const m = readMeta(id);
     if (!m || m.status !== 'running') continue;
     if (!pidAlive(m.pid)) {
-      m.status = 'interrupted';
+      if (m.cancelled) {
+        // 用户主动取消导致的退出，别报成「崩溃」——语义要诚实
+        m.status = 'cancelled';
+        m.message = '被用户取消';
+      } else {
+        m.status = 'interrupted';
+        m.message = '进程已不在（服务窗口被关掉、拔盘或崩溃），任务按中断处理';
+      }
       m.endedAt = m.endedAt || nowIso();
-      m.message = '进程已不在（服务窗口被关掉、拔盘或崩溃），任务按中断处理';
       writeMeta(m);
-      appendLog(id, '\n=== 任务中断：进程已不在 ===\n');
+      appendLog(id, '\n=== 任务结束：' + m.status + '（' + m.message + '）===\n');
       changed++;
     }
   }
@@ -326,7 +332,7 @@ function runJob(id) {
       if (m.cancelled) {
         m.status = 'cancelled';
         m.stage = '已取消';
-        m.message = m.message || '被用户取消';
+        m.message = '被用户取消';     // 覆盖 reconcile 可能写下的「中断」措辞
       } else if (code === 0) {
         m.status = 'done';
         m.stage = '完成';

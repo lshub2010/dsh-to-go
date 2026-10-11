@@ -22,9 +22,10 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const http = require('http');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const secretLib = require('./secret.js');
 const siteLib = require('./site.js');
+const jobsLib = require('./jobs.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const RUNTIME = path.join(ROOT, 'runtime');
@@ -43,6 +44,78 @@ const flag = (name, dflt) => {
 const PORT = parseInt(flag('--port', '3181'), 10);
 const TOKEN = crypto.randomBytes(24).toString('base64url');
 const NO_OPEN = argv.includes('--no-open');
+
+// ---------------------------------------------------------------- 口令会话
+// 口令只活在这个进程的内存里：页面用 /api/login 交一次，之后凡是「碰密钥 / 启停 dsh /
+// 跑安装任务」的操作都要求已登录。进程一退，口令就没了（这正是设计目标）。
+const SESSION = { pass: null, since: null, tries: 0 };
+const DSH_STATE_FILE = () => path.join(DATA, 'dsh-web.json');
+let dshChild = null;      // 本进程启动的 dsh 子进程
+let dshInfo = null;       // { pid, port, url, startedAt }
+
+function readDshInfo() {
+  if (dshInfo) return dshInfo;
+  try { dshInfo = JSON.parse(fs.readFileSync(DSH_STATE_FILE(), 'utf8')); } catch (e) { dshInfo = null; }
+  return dshInfo;
+}
+function writeDshInfo(info) {
+  dshInfo = info;
+  try {
+    if (info) fs.writeFileSync(DSH_STATE_FILE(), JSON.stringify(info, null, 2) + '\n', 'utf8');
+    else { try { fs.unlinkSync(DSH_STATE_FILE()); } catch (e) { /* 已无 */ } }
+  } catch (e) { /* 状态文件写不了不影响使用 */ }
+}
+function pidAlive(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+let portCache = { at: 0, port: 0, value: false };
+function portListening(port) {
+  const now = Date.now();
+  if (portCache.port === port && now - portCache.at < 2000) return portCache.value;
+  let value = false;
+  try {
+    const ns = String(spawnSync('netstat', ['-ano'], { encoding: 'utf8' }).stdout || '');
+    value = ns.split(/\r?\n/).some((l) => l.includes(':' + port + ' ') && /LISTENING/i.test(l));
+  } catch (e) { value = false; }
+  portCache = { at: now, port, value };
+  return value;
+}
+/** dsh 是否在跑：优先看我们自己起的子进程，其次看端口是否有人监听。 */
+function dshStatus() {
+  const info = readDshInfo() || {};
+  const webPort = readPort();
+  const mine = dshChild && dshChild.exitCode === null;
+  const alive = mine || pidAlive(info.pid);
+  const listening = portListening(webPort);
+  return {
+    running: !!(alive && listening) || (listening && pidAlive(info.pid)),
+    startedByThisProcess: !!mine,
+    pid: alive ? (mine ? dshChild.pid : info.pid) : null,
+    port: webPort,
+    url: listening ? (info.url || null) : null,
+    startedAt: info.startedAt || null,
+  };
+}
+function requireLogin() {
+  return !!SESSION.pass;
+}
+function safeEqual(a, b) {
+  const A = Buffer.from(String(a));
+  const B = Buffer.from(String(b));
+  if (A.length !== B.length) return false;
+  return crypto.timingSafeEqual(A, B);
+}
+/** 某个 PID 的命令行（结束进程前用它确认「这确实是 dsh」，避免 PID 复用误杀）。 */
+function pidCommandLine(pid) {
+  if (!pid) return '';
+  try {
+    const r = spawnSync('powershell', ['-NoProfile', '-Command',
+      '(Get-CimInstance Win32_Process -Filter "ProcessId = ' + Number(pid) + '").CommandLine'],
+      { encoding: 'utf8', timeout: 8000 });
+    return String(r.stdout || '').trim();
+  } catch (e) { return ''; }
+}
 
 function slotName() {
   try {
@@ -146,6 +219,10 @@ function state() {
     node: nodeVersion(),
     webPort: readPort(),
     configPort: PORT,
+    loggedIn: requireLogin(),
+    loginAt: SESSION.since,
+    dsh: dshStatus(),
+    jobs: jobsLib.status(),
     key: Object.assign({ envName: secretLib.keyName() }, keyMeta),
     site: site ? Object.assign({}, site, { overlayActive: fs.existsSync(siteLib.OVERLAY) }) : null,
     overlayPath: siteLib.OVERLAY,
@@ -180,6 +257,14 @@ async function handleApi(req, res, url) {
   if (bodyText) { try { body = JSON.parse(bodyText); } catch (e) { return send(400, { error: '请求体不是合法 JSON' }); } }
 
   const p = url.pathname;
+  // 需要「已输入口令」才允许的写操作：碰密钥、跑安装/插件、启停进程。
+  // 端口/临时目录这类不碰密钥的设置不在此列。
+  const NEEDS_LOGIN = ['/api/key', '/api/key/clear', '/api/keys/migrate', '/api/site', '/api/site/clear',
+    '/api/upgrade', '/api/jobs/install', '/api/jobs/upgrade', '/api/jobs/pnpm', '/api/jobs/cancel',
+    '/api/dsh/start', '/api/dsh/stop', '/api/backup'];
+  if (req.method === 'POST' && NEEDS_LOGIN.indexOf(p) >= 0 && !requireLogin()) {
+    return send(401, { error: '需要先输入口令解锁（口令只存在本服务的内存里）' });
+  }
   try {
     if (p === '/api/state') return send(200, state());
 
@@ -287,6 +372,118 @@ async function handleApi(req, res, url) {
       const r = runConfig(['upgrade', v, '--yes']);
       return send(r.status === 0 ? 200 : 500, { ok: r.status === 0, text: r.text, state: state() });
     }
+    if (p === '/api/login' && req.method === 'POST') {
+      const pass = String(body.pass || '');
+      if (!pass) return send(400, { error: '口令不能为空' });
+      const siteCount = require('./sites.js').readState().sites.length;
+      const store = secretLib.readStore();
+      if (!store || !store.verifier) {
+        // 首次：设置口令（只建立校验器，不解密任何东西）
+        if (!body.setup) {
+          return send(200, { ok: true, firstRun: true, message: '还没有设置过口令 —— 请确认后设置口令（它会同时用来加密站点密钥）' });
+        }
+        secretLib.ensurePass(pass);
+        SESSION.pass = pass; SESSION.since = new Date().toISOString(); SESSION.tries = 0;
+        return send(200, { ok: true, firstRun: true, created: true, loginAt: SESSION.since, state: state() });
+      }
+      if (!secretLib.verifyPass(pass)) {
+        SESSION.tries++;
+        return send(401, { ok: false, error: '口令不对（第 ' + SESSION.tries + ' 次）' });
+      }
+      SESSION.pass = pass; SESSION.since = new Date().toISOString(); SESSION.tries = 0;
+      return send(200, { ok: true, loginAt: SESSION.since, siteCount, state: state() });
+    }
+
+    if (p === '/api/logout' && req.method === 'POST') {
+      SESSION.pass = null; SESSION.since = null;
+      return send(200, { ok: true, loggedIn: false, state: state() });
+    }
+
+    // ------------------------------------------------------------ dsh 启停
+    if (p === '/api/dsh/start' && req.method === 'POST') {
+      if (!requireLogin()) return send(401, { error: '需要先输入口令解锁' });
+      const before = dshStatus();
+      if (before.running) return send(409, { error: 'dsh 已经在运行', state: state() });
+      const webPort = readPort();
+      if (portListening(webPort)) return send(409, { error: '端口 ' + webPort + ' 已被别的程序占用（dsh 不会自动换端口）', state: state() });
+      // 口令只经子进程环境变量传递：不进命令行、不落盘
+      const child = spawn(NODE_EXE, [path.join(__dirname, 'launch.js'), 'web', '--no-open'], {
+        cwd: ROOT,
+        env: Object.assign({}, process.env, { WZD_KEY_PASS: SESSION.pass }),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+      dshChild = child;
+      let out = '';
+      const onData = (b) => {
+        out += b.toString();
+        const m = /(http:\/\/127\.0\.0\.1:\d+\/\?token=[A-Za-z0-9_-]+)/.exec(out);
+        if (m) writeDshInfo({ pid: child.pid, port: webPort, url: m[1], startedAt: new Date().toISOString() });
+      };
+      child.stdout.on('data', onData);
+      child.stderr.on('data', onData);
+      child.on('exit', (code) => {
+        writeDshInfo(null);
+        dshChild = null;
+        try {
+          fs.mkdirSync(path.join(DATA, 'logs'), { recursive: true });
+          fs.appendFileSync(path.join(DATA, 'logs', 'launcher.log'),
+            '[' + new Date().toISOString() + '] ui-server: dsh web exited code=' + code + '\n', 'utf8');
+        } catch (e) { /* 日志不是关键路径 */ }
+      });
+      const t0 = Date.now();
+      while (Date.now() - t0 < 45000) {
+        if (portListening(webPort)) break;
+        if (child.exitCode !== null) break;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      const after = dshStatus();
+      return send(after.running ? 200 : 500, {
+        ok: after.running,
+        text: out.split('\n').filter(Boolean).slice(-8).join('\n'),
+        state: state(),
+      });
+    }
+
+    if (p === '/api/dsh/stop' && req.method === 'POST') {
+      if (!requireLogin()) return send(401, { error: '需要先输入口令解锁' });
+      const st = dshStatus();
+      if (!st.running) { writeDshInfo(null); return send(200, { ok: true, already: true, state: state() }); }
+      const pid = st.pid;
+      const cmdline = pidCommandLine(pid);
+      if (!cmdline || !/launch\.js|@deepseek-ai|dsh/i.test(cmdline)) {
+        return send(409, { error: 'PID ' + pid + ' 看起来不是 dsh（命令行不匹配），拒绝结束进程以免误杀', cmdline: cmdline.slice(0, 200) });
+      }
+      try { spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)], { windowsHide: true }); } catch (e) { /* 忽略 */ }
+      const t0 = Date.now();
+      while (Date.now() - t0 < 15000 && portListening(readPort())) await new Promise((r) => setTimeout(r, 400));
+      writeDshInfo(null);
+      dshChild = null;
+      const released = !portListening(readPort());
+      return send(released ? 200 : 500, { ok: released, state: state() });
+    }
+
+    // ------------------------------------------------------------ 后台任务
+    if (p === '/api/jobs' && req.method === 'GET') return send(200, jobsLib.status());
+    if (p === '/api/jobs/log' && req.method === 'GET') {
+      return send(200, jobsLib.readLog(url.searchParams.get('id'), Number(url.searchParams.get('from') || 0)));
+    }
+    if ((p === '/api/jobs/install' || p === '/api/jobs/upgrade' || p === '/api/jobs/pnpm') && req.method === 'POST') {
+      if (!requireLogin()) return send(401, { error: '需要先输入口令解锁' });
+      if (dshStatus().running) return send(409, { error: 'dsh 正在运行 —— 先停止它再做安装/升级/插件操作', state: state() });
+      let r;
+      if (p === '/api/jobs/install') r = jobsLib.spawnJob('install-slot', { slot: String(body.slot || 'agent-A'), version: String(body.version || '').trim() });
+      else if (p === '/api/jobs/upgrade') r = jobsLib.spawnJob('upgrade', { version: String(body.version || '').trim() });
+      else r = jobsLib.spawnJob('plugin-pnpm', { args: Array.isArray(body.args) ? body.args.map(String) : [], profile: String(body.profile || 'web') });
+      if (!r.ok) return send(r.busy ? 409 : 400, { ok: false, error: r.error, busy: !!r.busy, job: r.job || null });
+      return send(200, { ok: true, job: r.job });
+    }
+    if (p === '/api/jobs/cancel' && req.method === 'POST') {
+      if (!requireLogin()) return send(401, { error: '需要先输入口令解锁' });
+      const r = jobsLib.cancelJob(String(body.id || ''));
+      return send(r.ok ? 200 : 400, { ok: r.ok, error: r.error, job: r.job || null, state: state() });
+    }
+
     return send(404, { error: '没有这个接口：' + p });
   } catch (e) {
     return send(500, { error: String(e && e.message || e) });

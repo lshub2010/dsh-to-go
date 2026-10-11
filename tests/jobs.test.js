@@ -164,6 +164,24 @@ test('阶段提示：能从日志行里认出关键阶段', () => {
   assert.strictEqual(J.guessStage('这东西不认识'), null);
 });
 
+test('取消与中断识别的竞态：被取消的任务不该被报成「崩溃」', async () => {
+  await ensureIdle();
+  const c = J.createJob('custom', custom('setTimeout(()=>{},5000)'));
+  const p = J.runJob(c.job.id);
+  await sleep(300);
+  J.cancelJob(c.job.id);
+  // 模拟「另一个进程先看到进程没了」：杀完之后立刻 reconcile
+  const meta = J.readMeta(c.job.id);
+  J.reconcile();
+  const seen = J.readMeta(c.job.id);
+  assert.ok(['running', 'cancelled'].includes(seen.status), 'reconcile 不该把它标成别的状态：' + seen.status);
+  if (seen.status === 'cancelled') assert.match(String(seen.message), /取消/);
+  const r = await p;
+  assert.strictEqual(r.job.status, 'cancelled');
+  assert.match(String(J.readMeta(c.job.id).message), /取消/);
+  assert.strictEqual(meta.cancelled, true);
+});
+
 test('status()：给出忙碌状态与最近任务列表', async () => {
   await ensureIdle();
   const s0 = J.status();
