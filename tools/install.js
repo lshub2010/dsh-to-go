@@ -36,19 +36,22 @@ const NPM_MIRRORS = [
 
 // ------------------------------------------------------------------ 参数
 function parseArgs(argv) {
-  const o = { a: DEFAULT_A, b: DEFAULT_B, single: false, port: DEFAULT_PORT, registry: null, force: false };
+  const o = { a: DEFAULT_A, b: DEFAULT_B, single: false, port: DEFAULT_PORT, registry: null, force: false, slot: null, version: null };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     if (k === '--a') o.a = argv[++i];
     else if (k === '--b') o.b = argv[++i];
     else if (k === '--port') o.port = Number(argv[++i]);
     else if (k === '--registry') o.registry = argv[++i];
+    else if (k === '--slot') o.slot = argv[++i];
+    else if (k === '--version') o.version = argv[++i];
     else if (k === '--single') o.single = true;
     else if (k === '--force') o.force = true;
     else if (k === '--help' || k === '-h') { usage(); process.exit(0); }
     else { console.log('  未知参数：' + k); usage(); process.exit(2); }
   }
   if (!(o.port > 0 && o.port < 65536)) { console.log('  端口不合法：' + o.port); process.exit(2); }
+  if (o.slot && !/^agent-[AB]$/.test(o.slot)) { console.log('  槽名只能是 agent-A 或 agent-B：' + o.slot); process.exit(2); }
   return o;
 }
 
@@ -58,6 +61,8 @@ function usage() {
   console.log('    --a <版本|标签>   活动槽装的 dsh（默认 ' + DEFAULT_A + '）');
   console.log('    --b <版本|标签>   备用槽装的 dsh（默认 ' + DEFAULT_B + '）');
   console.log('    --single          只装一个槽（省一半空间，就没有秒级回滚了）');
+  console.log('    --slot <槽名>     只装指定槽（agent-A / agent-B），配 --version 使用');
+  console.log('    --version <版本>  与 --slot 搭配：这个槽装哪个版本');
   console.log('    --port <端口>     网页端口（默认 ' + DEFAULT_PORT + '）');
   console.log('    --registry <url>  只用一个 npm 源（默认官方源失败后自动换镜像）');
   console.log('    --force           即使已有 current.txt 也重写（不要随便用）');
@@ -132,9 +137,12 @@ function main() {
     ? [{ url: opt.registry, label: opt.registry }]
     : NPM_MIRRORS;
 
-  const plan = opt.single ? [['agent-A', opt.a]] : [['agent-A', opt.a], ['agent-B', opt.b]];
+  const plan = opt.slot
+    ? [[opt.slot, opt.version || opt.a]]
+    : (opt.single ? [['agent-A', opt.a]] : [['agent-A', opt.a], ['agent-B', opt.b]]);
   for (const [name, spec] of plan) {
     console.log('');
+    say('槽 ' + name + ' ← 目标版本 ' + spec);
     writeSlotPackage(name, spec);
     if (!npmInstall(name, registries)) {
       console.log('');
@@ -143,11 +151,12 @@ function main() {
     }
   }
 
-  // 活动槽：没装过就默认 A；已有记录且未 --force 则保持
+  // 活动槽：没装过就默认 A；指定 --slot 时若还没有记录则用它；已有记录且未 --force 则保持
   let active = 'agent-A';
+  if (opt.slot && !fs.existsSync(SLOT_FILE)) active = opt.slot;
   if (fs.existsSync(SLOT_FILE) && !opt.force) {
     const cur = fs.readFileSync(SLOT_FILE, 'utf8').trim();
-    if (plan.some(([n]) => n === cur)) active = cur;
+    if (/^agent-[AB]$/.test(cur)) active = cur;
   }
   fs.writeFileSync(SLOT_FILE, active + '\n', 'utf8');
   fs.writeFileSync(PORT_FILE, String(opt.port) + '\n', 'utf8');
