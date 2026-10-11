@@ -268,6 +268,10 @@ function unlock(opts) {
 /** 把旧单密钥文件导入 v2（旧文件保留，可回退）。 */
 function migrateLegacy(pass, siteId, opts) {
   const o = opts || {};
+  const file = o.file || secretFile();
+  // 先确认 v2 库的口令一致：否则 setKey 会抛异常，调用方拿到的是崩溃而不是可处理的结果
+  const store = readStore(file);
+  if (store && store.verifier && !verifyPass(pass, file)) return { ok: false, reason: 'badpass' };
   let blob;
   try {
     blob = JSON.parse(fs.readFileSync(o.legacyFile || legacyFile(), 'utf8'));
@@ -280,11 +284,13 @@ function migrateLegacy(pass, siteId, opts) {
   } catch (e) {
     return { ok: false, reason: 'badpass' };
   }
-  const name = currentKeyName(blob.key_name);
+  const name = blob.key_name || currentKeyName();
   const id = siteId || (name && name !== 'DEEPSEEK_API_KEY'
     ? (name.replace(/_API_KEY$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'default')
     : 'default');
-  const res = setKey(id, secret, pass, { keyName: name, file: o.file });
+  // 目标站点已经有密钥时不静默覆盖（旧值可能是用户更需要的那个）
+  if (store && store.keys[id] && !o.overwrite) return { ok: false, reason: 'exists', siteId: id };
+  const res = setKey(id, secret, pass, { keyName: name, file });
   return { ok: true, siteId: id, length: secret.length, keyName: res.keyName };
 }
 
@@ -376,8 +382,14 @@ function cmdMigrate(argv) {
   const site = argv.indexOf('--site') >= 0 ? argv[argv.indexOf('--site') + 1] : null;
   const pass = process.env.WZD_KEY_PASS !== undefined ? process.env.WZD_KEY_PASS : null;
   if (!pass) { console.log('请先设置环境变量 WZD_KEY_PASS（避免口令进命令行），或在图形界面里迁移。'); return 2; }
-  const r = migrateLegacy(pass, site);
-  if (!r.ok) { console.log('迁移失败：' + r.reason + (r.reason === 'badpass' ? '（口令不对）' : '')); return 1; }
+  const overwrite = argv.includes('--overwrite');
+  const r = migrateLegacy(pass, site, { overwrite });
+  if (!r.ok) {
+    if (r.reason === 'badpass') console.log('迁移失败：口令不对（新密钥库与旧文件的口令不一致，或旧文件口令错了）。');
+    else if (r.reason === 'exists') console.log('迁移失败：站点 ' + r.siteId + ' 已经有密钥了；确认要覆盖就加 --overwrite。');
+    else console.log('迁移失败：找不到可迁移的旧密钥文件。');
+    return 1;
+  }
   console.log('已导入站点 ' + r.siteId + '（变量名 ' + r.keyName + '，' + r.length + ' 字符）。旧文件保留未删。');
   return 0;
 }

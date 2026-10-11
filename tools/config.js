@@ -17,7 +17,7 @@ const readline = require('readline');
 const { spawnSync } = require('child_process');
 const secretLib = require('./secret.js');
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = process.env.WZD_ROOT || path.resolve(__dirname, '..');
 const RUNTIME = path.join(ROOT, 'runtime');
 const NODE_EXE = path.join(RUNTIME, 'node', 'node.exe');
 const NPM_CLI = path.join(RUNTIME, 'node', 'node_modules', 'npm', 'bin', 'npm-cli.js');

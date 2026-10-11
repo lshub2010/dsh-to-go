@@ -129,9 +129,20 @@ function writeState(state, dir) {
 function upsert(state, site) {
   const s = normalizeSite(site);
   const next = { version: 1, default: state && state.default ? Object.assign({}, state.default) : null, sites: (state && state.sites ? state.sites : []).slice() };
+  // 变量名必须唯一：不同站点 ID 可能推导出同一个环境变量名（如 a-b 与 a--b），
+  // 撞了就会互相覆盖密钥，所以要在这里拦住并要求显式指定一个不同的名字。
+  const clash = next.sites.find((x) => x.id !== s.id && x.keyEnv === s.keyEnv);
+  if (clash) {
+    throw new Error('变量名 ' + s.keyEnv + ' 已被站点 ' + clash.id + ' 占用（' + s.id + ' 与它推导出同一个名字），请手动指定一个不同的密钥变量名');
+  }
   const i = next.sites.findIndex((x) => x.id === s.id);
   if (i >= 0) next.sites[i] = Object.assign({}, next.sites[i], s);
   else next.sites.push(s);
+  // 默认站点被停用后不能继续当默认（否则覆盖层会写出指向不存在 provider 的默认模型）
+  if (next.default && next.default.siteId === s.id) {
+    const cur = next.sites.find((x) => x.id === s.id);
+    if (!cur || cur.enabled === false || !cur.models.some((m) => m.id === next.default.model)) next.default = null;
+  }
   return next;
 }
 
@@ -147,6 +158,7 @@ function setDefault(state, siteId, model) {
   if (!siteId || !model) return next;
   const site = next.sites.find((s) => s.id === siteId);
   if (!site) throw new Error('没有这个站点：' + siteId);
+  if (site.enabled === false) throw new Error('站点 ' + siteId + ' 已停用，不能作为默认模型来源');
   if (!site.models.some((m) => m.id === model)) throw new Error('站点 ' + siteId + ' 里没有这个模型：' + model);
   next.default = { siteId, model };
   return next;
@@ -201,13 +213,20 @@ function buildOverlay(state, opts) {
       }
     }
   }
-  if (state.default && state.default.siteId && state.default.model) {
+  // 默认模型只在「该站点已启用且模型还在」时才写：否则会留下指向不存在 provider 的悬空引用
+  const defSite = state.default ? enabled.find((s) => s.id === state.default.siteId) : null;
+  const defOk = !!(defSite && defSite.models.some((m) => m.id === state.default.model));
+  if (defOk) {
     L.push('- id: ' + DEFAULT_MODEL_ENTRY);
     L.push('  config:');
     L.push('    provider: ' + yamlScalar(state.default.siteId));
     L.push('    model: ' + yamlScalar(state.default.model));
+  } else if (state.default) {
+    L.push('# 注意：默认模型指向的站点已停用或该模型已删除，本次没有写入 ' + DEFAULT_MODEL_ENTRY);
   }
-  for (const id of (o.disabled || []).slice().sort()) {
+  // 我们自己占用的条目 id 绝不能被当成「要停用的插件」——否则会把 provider 覆盖层整块关掉
+  const reserved = [PROVIDER_ENTRY, DEFAULT_MODEL_ENTRY];
+  for (const id of (o.disabled || []).slice().filter((x) => reserved.indexOf(x) < 0).sort()) {
     L.push('- id: ' + yamlScalar(id));
     L.push('  disabled: true');
   }
@@ -292,14 +311,18 @@ async function main() {
   }
   if (cmd === 'probe') {
     const baseURL = argv[1];
-    const key = argv[2];
-    const r = await probeModels({ baseURL, key, api: argv[3] || 'openai-completions' });
+    // 密钥只从环境变量取：放进命令行会出现在进程列表与命令历史里（硬规则）
+    const key = process.env.WZD_PROBE_KEY || '';
+    const r = await probeModels({ baseURL, key, api: argv[2] || 'openai-completions' });
     if (!r.ok) { console.log('  探测失败：' + r.error); return 1; }
     console.log('  探测成功（HTTP ' + r.status + '），模型 ' + r.models.length + ' 个：');
     for (const m of r.models) console.log('    ' + m);
     return 0;
   }
-  console.log('用法：node tools/sites.js <list|overlay|probe <url> [key] [api]>');
+  console.log('用法：');
+  console.log('  node tools/sites.js list');
+  console.log('  node tools/sites.js overlay');
+  console.log('  node tools/sites.js probe <接口地址> [协议]     （密钥放环境变量 WZD_PROBE_KEY，勿用命令行传）');
   return 2;
 }
 

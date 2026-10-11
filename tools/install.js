@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = process.env.WZD_ROOT || path.resolve(__dirname, '..');
 const RUNTIME = path.join(ROOT, 'runtime');
 const NODE_EXE = path.join(RUNTIME, 'node', 'node.exe');
 const NPM_CLI = path.join(RUNTIME, 'node', 'node_modules', 'npm', 'bin', 'npm-cli.js');
@@ -36,7 +36,7 @@ const NPM_MIRRORS = [
 
 // ------------------------------------------------------------------ 参数
 function parseArgs(argv) {
-  const o = { a: DEFAULT_A, b: DEFAULT_B, single: false, port: DEFAULT_PORT, registry: null, force: false, slot: null, version: null };
+  const o = { a: DEFAULT_A, b: DEFAULT_B, single: false, port: DEFAULT_PORT, portGiven: argv.includes('--port'), registry: null, force: false, slot: null, version: null };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     if (k === '--a') o.a = argv[++i];
@@ -159,7 +159,13 @@ function main() {
     if (/^agent-[AB]$/.test(cur)) active = cur;
   }
   fs.writeFileSync(SLOT_FILE, active + '\n', 'utf8');
-  fs.writeFileSync(PORT_FILE, String(opt.port) + '\n', 'utf8');
+  // 端口只在「显式指定」或「还没有记录」时才写：后台安装任务（jobs 的 install-slot）不带
+  // --port，绝不能把用户设过的端口悄悄改回默认（否则下次启动突然换端口，很难排查）
+  if (opt.portGiven || !fs.existsSync(PORT_FILE)) {
+    fs.writeFileSync(PORT_FILE, String(opt.port) + '\n', 'utf8');
+  } else {
+    say('网页端口保持 ' + fs.readFileSync(PORT_FILE, 'utf8').trim() + '（本次没给 --port，不改动）');
+  }
 
   const record = [
     'dsh-to-go 便携包 — 本地构建记录',
@@ -175,7 +181,13 @@ function main() {
     '升级：dsh-config.cmd → 2，或图形配置页「槽位与升级」页',
     '回滚：把 runtime\\current.txt 改成另一个槽名即可',
   ].join('\n') + '\n';
-  fs.writeFileSync(VERSION_FILE, record, 'utf8');
+  // 已有构建记录时不要覆盖（里面可能有升级历史），只追加一行
+  if (fs.existsSync(VERSION_FILE)) {
+    fs.appendFileSync(VERSION_FILE, '重新安装记录 ' + new Date().toISOString() + '：' +
+      plan.map(([n, s]) => n + '←' + s).join('、') + '（活动槽 ' + active + '）\n', 'utf8');
+  } else {
+    fs.writeFileSync(VERSION_FILE, record, 'utf8');
+  }
 
   console.log('');
   say('全部完成。活动槽 ' + active + '（dsh ' + installedVersion(active) + '）');

@@ -77,19 +77,38 @@ function pidAlive(pid) {
   if (!pid) return false;
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
+/** 某个 PID 的命令行：结束进程前用它确认「这确实是本次任务」，防 PID 复用误杀。 */
+function pidCommandLine(pid) {
+  if (!pid) return '';
+  try {
+    const r = spawnSync('powershell', ['-NoProfile', '-Command',
+      '(Get-CimInstance Win32_Process -Filter "ProcessId = ' + Number(pid) + '").CommandLine'],
+      { encoding: 'utf8', timeout: 8000 });
+    return String(r.stdout || '').trim();
+  } catch (e) { return ''; }
+}
 function appendLog(id, text) {
   ensureDirs();
   fs.appendFileSync(logFile(id), text, 'utf8');
-  // 超上限只留尾部，避免一次安装把盘写满
+  // 超上限只留尾部，避免一次安装把盘写满。
+  // 截断点要对齐到行首，否则会切出半个 UTF-8 字符；同时递增 logEpoch，
+  // 让客户端知道自己手里的偏移量已经失效（否则界面会重复渲染或漏读）。
   try {
     const st = fs.statSync(logFile(id));
     if (st.size > LOG_CAP) {
-      const keep = 512 * 1024;
       const buf = fs.readFileSync(logFile(id));
-      fs.writeFileSync(logFile(id), buf.slice(buf.length - keep));
-      appendLog(id, '\n…（较早的日志已被截断，只保留尾部）\n');
+      let start = Math.max(0, buf.length - 512 * 1024);
+      while (start < buf.length && (buf[start] & 0xC0) === 0x80) start++;   // 退到字符边界
+      const nl = buf.indexOf(0x0A, start);
+      if (nl >= 0 && nl + 1 < buf.length) start = nl + 1;                    // 退到行首
+      const tail = buf.slice(start);
+      fs.writeFileSync(logFile(id), Buffer.concat([
+        Buffer.from('…（较早的日志已截断，只保留尾部）\n', 'utf8'), tail,
+      ]));
+      const m = readMeta(id);
+      if (m) { m.logEpoch = (m.logEpoch || 0) + 1; m.logTruncatedAt = nowIso(); writeMeta(m); }
     }
-  } catch (e) { /* 忽略 */ }
+  } catch (e) { /* 截断失败不影响任务 */ }
 }
 
 // ------------------------------------------------------------------ 任务定义
@@ -138,21 +157,50 @@ const KINDS = {
 };
 
 // ------------------------------------------------------------------ 状态
-/** 把「标着 running 但进程已经不在」的任务标成 interrupted。 */
+const QUEUED_GRACE_MS = 60 * 1000;              // 排队超过这么久说明发起进程已经不在了
+const MAX_RUN_MS = 3 * 60 * 60 * 1000;          // 兜底：跑超过 3 小时按异常处理（安装不会这么久）
+
+/** 把「进程已经不在了」的任务收拾干净：含排队未启动的、PID 被复用的、超长挂住的。 */
 function reconcile() {
   ensureDirs();
   let changed = 0;
   for (const id of listIds()) {
     const m = readMeta(id);
-    if (!m || m.status !== 'running') continue;
-    if (!pidAlive(m.pid)) {
+    if (!m) continue;
+
+    if (m.status === 'queued') {
+      const age = Date.now() - Date.parse(m.createdAt || 0);
+      if (!(age > QUEUED_GRACE_MS)) continue;
+      m.status = 'interrupted';
+      m.message = '任务还没开始就中断了（发起它的进程已退出）';
+      m.endedAt = m.endedAt || nowIso();
+      writeMeta(m);
+      appendLog(id, '\n=== 任务结束：interrupted（' + m.message + '）===\n');
+      changed++;
+      continue;
+    }
+
+    if (m.status !== 'running') continue;
+    const startedMs = Date.parse(m.startedAt || 0) || 0;
+    const tooLong = startedMs > 0 && (Date.now() - startedMs) > MAX_RUN_MS;
+    if (!pidAlive(m.pid) || tooLong) {
       if (m.cancelled) {
         // 用户主动取消导致的退出，别报成「崩溃」——语义要诚实
         m.status = 'cancelled';
         m.message = '被用户取消';
       } else {
         m.status = 'interrupted';
-        m.message = '进程已不在（服务窗口被关掉、拔盘或崩溃），任务按中断处理';
+        m.message = tooLong
+          ? '任务超过 ' + Math.round(MAX_RUN_MS / 3600000) + ' 小时仍未结束，按异常处理'
+          : '进程已不在（服务窗口被关掉、拔盘或崩溃），任务按中断处理';
+        // 中断的安装任务同样要收拾现场：否则半装的 node_modules 会留在槽里
+        const def = KINDS[m.kind];
+        if (def && def.rollback) {
+          try {
+            m.rollback = def.rollback(m.opts, m.pre || {});
+            appendLog(id, '\n=== 自动回滚：' + m.rollback.reason + ' ===\n');
+          } catch (e) { /* 回滚失败不影响状态记录 */ }
+        }
       }
       m.endedAt = m.endedAt || nowIso();
       writeMeta(m);
@@ -178,9 +226,13 @@ function listJobs(limit) {
   return ids.map((id) => readMeta(id)).filter(Boolean).sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
 }
 
+/** 占用中的任务：running，或刚建好还没开始跑的 queued（否则两个请求会同时被放行）。 */
 function runningJob() {
   reconcile();
-  for (const m of listJobs(50)) if (m.status === 'running') return m;
+  for (const m of listJobs(50)) {
+    if (m.status === 'running') return m;
+    if (m.status === 'queued') return m;
+  }
   return null;
 }
 function isBusy() { return !!runningJob(); }
@@ -199,12 +251,25 @@ function releaseLockIfStale() {
 }
 function acquireLock(id) {
   ensureDirs();
+  reconcile();
+  const holder = readLock();
+  if (holder && holder !== id) {
+    const hm = readMeta(holder);
+    const holderActive = !!hm && (hm.status === 'running' || hm.status === 'queued') && (hm.status === 'queued' || pidAlive(hm.pid));
+    // 持有者还活着 → 老老实实失败，绝不能覆盖锁（这是「互斥」唯一的保证）
+    if (holderActive) return false;
+    try { fs.unlinkSync(LOCK); } catch (e) { /* 已被释放或已被接手 */ }
+  }
   try {
     fs.writeFileSync(LOCK, id, { flag: 'wx' });
     return true;
   } catch (e) {
-    // 锁被占：如果持有者已经不在跑，就接手（避免死锁）
-    releaseLockIfStale();
+    // 极小概率竞态：再确认一次持有者是否活着
+    const h2 = readLock();
+    if (h2 && h2 !== id) {
+      const m2 = readMeta(h2);
+      if (m2 && (m2.status === 'running' || m2.status === 'queued')) return false;
+    }
     try { fs.writeFileSync(LOCK, id); return true; } catch (e2) { return false; }
   }
 }
@@ -240,14 +305,18 @@ function createJob(kind, opts) {
   return { ok: true, job: meta };
 }
 
+/** 历史任务只保留最近 KEEP_JOBS 条；正在跑和排队中的永不删（否则任务会被自己的清理删掉）。 */
 function pruneOld() {
   const ids = listIds();
   if (ids.length <= KEEP_JOBS) return;
-  for (const id of ids.slice(0, ids.length - KEEP_JOBS)) {
+  let toDelete = ids.length - KEEP_JOBS;
+  for (const id of ids) {
+    if (toDelete <= 0) break;
     const m = readMeta(id);
-    if (m && m.status === 'running') continue;
+    if (m && (m.status === 'running' || m.status === 'queued')) continue;
     try { fs.unlinkSync(metaFile(id)); } catch (e) { /* 忽略 */ }
     try { fs.unlinkSync(logFile(id)); } catch (e) { /* 忽略 */ }
+    toDelete--;
   }
 }
 
@@ -275,26 +344,39 @@ function runJob(id) {
     meta.message = '拿不到执行锁（可能另一个窗口正在跑任务）';
     meta.endedAt = nowIso();
     writeMeta(meta);
-    return { ok: false, error: meta.message };
+    return { ok: false, job: meta, error: meta.message };
   }
 
+  const cmdLine = cmd.map((c) => (c === nodeExe() ? 'node' : c)).join(' ');
+  meta.cmdLine = cmdLine;
+  appendLog(id, '\n$ ' + cmdLine + '\n\n');
+
+  let child;
+  try {
+    child = spawn(cmd[0], cmd.slice(1), {
+      cwd: ROOT,
+      env: Object.assign({}, process.env, {
+        DSH_HOME: DATA,
+        DSH_AGENTS_HOME: path.join(DATA, 'agents'),
+        npm_config_cache: path.join(RUNTIME, 'npm-cache'),
+      }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+  } catch (e) {
+    meta.status = 'failed';
+    meta.message = '无法启动命令：' + e.message;
+    meta.endedAt = nowIso();
+    writeMeta(meta);
+    appendLog(id, '\n=== 无法启动命令：' + e.message + ' ===\n');
+    releaseLock(id);
+    return { ok: false, job: meta };
+  }
+  // 关键：status 与 pid 一次性落盘。分两次写会留下「running 但 pid 为空」的窗口，
+  // 另一个进程正好在这时 reconcile 就会把任务误判成中断。
   meta.status = 'running';
   meta.startedAt = nowIso();
   meta.stage = '启动中';
-  meta.cmdLine = cmd.map((c) => (c === nodeExe() ? 'node' : c)).join(' ');
-  writeMeta(meta);
-  appendLog(id, '\n$ ' + meta.cmdLine + '\n\n');
-
-  const child = spawn(cmd[0], cmd.slice(1), {
-    cwd: ROOT,
-    env: Object.assign({}, process.env, {
-      DSH_HOME: DATA,
-      DSH_AGENTS_HOME: path.join(DATA, 'agents'),
-      npm_config_cache: path.join(RUNTIME, 'npm-cache'),
-    }),
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
   meta.pid = child.pid;
   writeMeta(meta);
 
@@ -373,7 +455,9 @@ function readLog(id, from) {
   const f = logFile(id);
   let size = 0;
   try { size = fs.statSync(f).size; } catch (e) { return { ok: false, error: '没有这个任务的日志', text: '', next: 0, size: 0 }; }
-  const start = Number.isFinite(from) && from >= 0 && from <= size ? from : 0;
+  // 偏移量越界（日志被截断过，或客户端拿的是上一代偏移量）→ 从头给，并明确告诉它这是重来
+  const reset = !(Number.isFinite(from) && from >= 0 && from <= size);
+  const start = reset ? 0 : from;
   let text = '';
   try {
     const fd = fs.openSync(f, 'r');
@@ -385,17 +469,27 @@ function readLog(id, from) {
   } catch (e) {
     return { ok: false, error: e.message, text: '', next: size, size };
   }
-  return { ok: true, text, next: size, size };
+  const m = readMeta(id) || {};
+  return { ok: true, text, next: size, size, reset, logEpoch: m.logEpoch || 0 };
 }
 
 function cancelJob(id) {
+  reconcile();
   const m = readMeta(id);
   if (!m) return { ok: false, error: '没有这个任务：' + id };
   if (m.status !== 'running') return { ok: false, error: '任务当前状态是 ' + m.status + '，不需要取消' };
   m.cancelled = true;
   writeMeta(m);
   appendLog(id, '\n=== 正在取消（杀掉子进程树）===\n');
-  try { spawnSync('taskkill', ['/F', '/T', '/PID', String(m.pid)], { windowsHide: true }); } catch (e) { /* 忽略 */ }
+  // 杀之前先确认这个 PID 还属于本次任务：PID 可能已经被系统复用给无关进程
+  const cmd = pidCommandLine(m.pid);
+  if (!cmd) {
+    appendLog(id, '=== 未结束进程：查不到 PID ' + m.pid + ' 的命令行（多半已经退出了）===\n');
+  } else if (!/(node|install\.js|launch\.js|config\.js|@deepseek-ai|dsh)/i.test(cmd)) {
+    appendLog(id, '=== 未结束进程：PID ' + m.pid + ' 的命令行不像本次任务，可能已被复用 ===\n' + cmd.slice(0, 200) + '\n');
+  } else {
+    try { spawnSync('taskkill', ['/F', '/T', '/PID', String(m.pid)], { windowsHide: true }); } catch (e) { /* 忽略 */ }
+  }
   return { ok: true, job: readMeta(id) };
 }
 

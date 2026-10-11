@@ -100,6 +100,13 @@ function dshStatus() {
 function requireLogin() {
   return !!SESSION.pass;
 }
+/** 插件停用清单（data\plugins.json，由插件页维护）。 */
+function readDisabledPlugins() {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(DATA, 'plugins.json'), 'utf8'));
+    return Array.isArray(j.disabled) ? j.disabled : [];
+  } catch (e) { return []; }
+}
 function safeEqual(a, b) {
   const A = Buffer.from(String(a));
   const B = Buffer.from(String(b));
@@ -223,6 +230,12 @@ function state() {
     loginAt: SESSION.since,
     dsh: dshStatus(),
     jobs: jobsLib.status(),
+    sites: (() => {
+      try {
+        const st = require('./sites.js').readState();
+        return { list: st.sites, default: st.default };
+      } catch (e) { return { list: [], default: null }; }
+    })(),
     key: Object.assign({ envName: secretLib.keyName() }, keyMeta),
     site: site ? Object.assign({}, site, { overlayActive: fs.existsSync(siteLib.OVERLAY) }) : null,
     overlayPath: siteLib.OVERLAY,
@@ -322,7 +335,16 @@ async function handleApi(req, res, url) {
         const removed = secretLib.removeKey(siteId);
         return send(200, { ok: removed, removed, siteId, state: state() });
       }
+      // 删除整个密钥库是重操作：必须显式确认 + 再验一次口令。
+      // 缺字段/拼错字段的请求一律拒绝——不能让一个前端 bug 把用户所有密钥删掉。
+      if (String(body.confirm || '') !== 'DELETE_ALL') {
+        return send(400, { error: '要删除整个密钥库，请显式传 confirm: "DELETE_ALL"（并带上 siteId 则只删该站点）' });
+      }
+      if (!body.pass || !secretLib.verifyPass(String(body.pass))) {
+        return send(400, { error: '删除整个密钥库需要再输入一次当前口令' });
+      }
       secretLib.destroyStore();
+      SESSION.pass = null;      // 口令校验器一起没了，本次会话随之失效
       return send(200, { ok: true, destroyedAll: true, state: state() });
     }
 
@@ -482,6 +504,98 @@ async function handleApi(req, res, url) {
       if (!requireLogin()) return send(401, { error: '需要先输入口令解锁' });
       const r = jobsLib.cancelJob(String(body.id || ''));
       return send(r.ok ? 200 : 400, { ok: r.ok, error: r.error, job: r.job || null, state: state() });
+    }
+
+    // ------------------------------------------------------------ 站点表
+    // 唯一事实来源是 data\sites.json（sites.js）；覆盖层由它生成。
+    // 旧的单站点接口 /api/site 保留，但同样写进 sites.js，避免出现两套事实。
+    if (p === '/api/sites' && req.method === 'GET') {
+      const sitesLib = require('./sites.js');
+      const st = sitesLib.readState();
+      return send(200, {
+        sites: st.sites, default: st.default,
+        overlay: sitesLib.OVERLAY, overlayExists: fs.existsSync(sitesLib.OVERLAY),
+        disabledPlugins: readDisabledPlugins(),
+      });
+    }
+
+    if (p === '/api/sites' && req.method === 'POST') {
+      const sitesLib = require('./sites.js');
+      try {
+        let st = sitesLib.upsert(sitesLib.readState(), body.site || body);
+        const siteId = (body.site && body.site.id) || body.id;
+        if (body.default && body.default.siteId) st = sitesLib.setDefault(st, body.default.siteId, body.default.model);
+        else if (!st.default) {
+          const s = st.sites.find((x) => x.id === siteId);
+          if (s && s.enabled !== false) st = sitesLib.setDefault(st, s.id, s.models[0].id);
+        }
+        sitesLib.writeState(st);
+        const w = sitesLib.writeOverlay(st, { disabled: readDisabledPlugins() });
+        return send(200, { ok: true, overlay: w.overlay, backup: w.backup, sites: st.sites, default: st.default, state: state() });
+      } catch (e) {
+        return send(400, { error: String(e && e.message || e) });
+      }
+    }
+
+    if (p === '/api/sites/delete' && req.method === 'POST') {
+      const sitesLib = require('./sites.js');
+      const siteId = String(body.siteId || '').trim();
+      if (!/^[a-z0-9][a-z0-9-]*$/.test(siteId)) return send(400, { error: '站点 ID 不合法' });
+      let st = sitesLib.removeSite(sitesLib.readState(), siteId);
+      sitesLib.writeState(st);
+      const w = sitesLib.writeOverlay(st, { disabled: readDisabledPlugins() });
+      let keyRemoved = false;
+      if (body.removeKey) keyRemoved = secretLib.removeKey(siteId);
+      return send(200, { ok: true, keyRemoved, overlay: w.overlay, sites: st.sites, default: st.default, state: state() });
+    }
+
+    if (p === '/api/sites/probe' && req.method === 'POST') {
+      const sitesLib = require('./sites.js');
+      let key = String(body.key || '');
+      // 没带密钥时（页面刚打开、用户还没重输）就用已保存的那把，需要已登录
+      if (!key && body.siteId && requireLogin()) {
+        const un = secretLib.unlockAll(SESSION.pass);
+        if (un.ok && un.keys[String(body.siteId)]) key = un.keys[String(body.siteId)];
+      }
+      const r = await sitesLib.probeModels({
+        baseURL: String(body.baseURL || ''), api: String(body.api || 'openai-completions'),
+        key, timeoutMs: Number(body.timeoutMs) || 15000,
+      });
+      return send(r.ok ? 200 : 502, r);
+    }
+
+    if (p === '/api/overlay/rebuild' && req.method === 'POST') {
+      const sitesLib = require('./sites.js');
+      const st = sitesLib.readState();
+      const w = sitesLib.writeOverlay(st, { disabled: readDisabledPlugins() });
+      const dump = runSite(['dump']);
+      return send(200, { ok: true, overlay: w.overlay, backup: w.backup, dump: dump.text, state: state() });
+    }
+
+    // 旧的单站点接口：保留可用，但改为写 sites.js（单一事实来源）
+    if (p === '/api/site' && req.method === 'POST') {
+      const sitesLib = require('./sites.js');
+      try {
+        let st = sitesLib.upsert(sitesLib.readState(), {
+          id: body.id, baseURL: body.baseURL, api: body.api, keyEnv: body.keyEnv,
+          models: body.models, compat: body.compat === false ? null : body.compat,
+        });
+        const s = st.sites.find((x) => x.id === String(body.id || '').trim());
+        if (s && s.enabled !== false && (!st.default || st.default.siteId === s.id)) st = sitesLib.setDefault(st, s.id, s.models[0].id);
+        sitesLib.writeState(st);
+        const w = sitesLib.writeOverlay(st, { disabled: readDisabledPlugins() });
+        return send(200, { ok: true, legacy: true, overlay: w.overlay, cleanedLines: 0, state: state() });
+      } catch (e) {
+        return send(400, { error: String(e && e.message || e) });
+      }
+    }
+
+    if (p === '/api/site/clear' && req.method === 'POST') {
+      const sitesLib = require('./sites.js');
+      const st = { version: 1, default: null, sites: [] };
+      sitesLib.writeState(st);
+      try { fs.unlinkSync(sitesLib.OVERLAY); } catch (e) { /* 本来就没有 */ }
+      return send(200, { ok: true, cleanedLines: 0, state: state() });
     }
 
     return send(404, { error: '没有这个接口：' + p });

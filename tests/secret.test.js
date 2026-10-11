@@ -135,6 +135,46 @@ test('migrateLegacy：旧单密钥导入 v2，旧文件保留', () => {
   assert.strictEqual(missing.reason, 'missing');
 });
 
+test('migrateLegacy：口令不一致时给出可处理的结果，而不是抛异常', () => {
+  const dir = fs.mkdtempSync(path.join(TMP, 'mig-badpass-'));
+  const oldFile = path.join(dir, 'model-key.enc');
+  const okFile = path.join(dir, 'model-key-ok.enc');
+  const newFile = path.join(dir, 'keys.enc');
+  fs.writeFileSync(oldFile, JSON.stringify(Sec.encrypt('sk-legacy-value', 'old-pass')), 'utf8');
+  fs.writeFileSync(okFile, JSON.stringify(Sec.encrypt('sk-legacy-value', 'new-pass')), 'utf8');
+  // 先用另一把口令建立 v2 库
+  Sec.setKey('some-site', 'sk-existing', 'new-pass', { file: newFile });
+
+  // 旧文件口令与库口令不一致 → 可处理的结果（badpass），不是抛异常
+  const r = Sec.migrateLegacy('old-pass', null, { legacyFile: oldFile, file: newFile });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'badpass', '不该抛异常，也不该把旧密钥硬塞进另一把口令的库里');
+
+  // 口令一致时才允许迁移
+  const ok = Sec.migrateLegacy('new-pass', null, { legacyFile: okFile, file: newFile });
+  assert.strictEqual(ok.ok, true);
+  assert.strictEqual(ok.siteId, 'default');
+});
+
+test('migrateLegacy：目标站点已有密钥时不静默覆盖', () => {
+  const dir = fs.mkdtempSync(path.join(TMP, 'mig-exists-'));
+  const oldFile = path.join(dir, 'model-key.enc');
+  const newFile = path.join(dir, 'keys.enc');
+  const blob = Sec.encrypt('sk-from-legacy', PASS);
+  blob.key_name = 'IBAO_API_KEY';
+  fs.writeFileSync(oldFile, JSON.stringify(blob), 'utf8');
+  Sec.setKey('ibao', 'sk-already-in-v2', PASS, { file: newFile });
+
+  const r = Sec.migrateLegacy(PASS, null, { legacyFile: oldFile, file: newFile });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'exists');
+  assert.strictEqual(Sec.unlockAll(PASS, newFile).keys['ibao'], 'sk-already-in-v2', '原有密钥必须原封不动');
+
+  const ow = Sec.migrateLegacy(PASS, null, { legacyFile: oldFile, file: newFile, overwrite: true });
+  assert.strictEqual(ow.ok, true);
+  assert.strictEqual(Sec.unlockAll(PASS, newFile).keys['ibao'], 'sk-from-legacy');
+});
+
 test('CLI selftest 退出码为 0', () => {
   const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'tools', 'secret.js'), 'selftest'], {
     encoding: 'utf8',

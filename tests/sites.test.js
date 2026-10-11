@@ -112,6 +112,46 @@ test('buildOverlay：多站点 + 停用插件 + 默认模型', () => {
   assert.ok(yml.indexOf('some-plugin') < yml.indexOf('ui-theme'));
 });
 
+test('keyEnv 碰撞：两个不同站点 ID 推导出同一个变量名时必须被拦住', () => {
+  let st = S.upsert(S.emptyState(), { id: 'a-b', baseURL: 'https://a/v1', models: [{ id: 'm' }] });
+  assert.strictEqual(st.sites[0].keyEnv, 'A_B_API_KEY');
+  assert.throws(() => S.upsert(st, { id: 'a--b', baseURL: 'https://b/v1', models: [{ id: 'm' }] }), /已被站点 a-b 占用/);
+  // 显式给一个不同名字就可以
+  const ok = S.upsert(st, { id: 'a--b', baseURL: 'https://b/v1', models: [{ id: 'm' }], keyEnv: 'A__B_API_KEY' });
+  assert.strictEqual(ok.sites.length, 2);
+});
+
+test('默认站点被停用 / 模型被删：默认清空且不再写出悬空的 agent-default-model', () => {
+  let st = S.upsert(S.emptyState(), { id: 'a', baseURL: 'https://a/v1', models: [{ id: 'ma' }] });
+  st = S.upsert(st, { id: 'b', baseURL: 'https://b/v1', models: [{ id: 'mb' }] });
+  st = S.setDefault(st, 'a', 'ma');
+  assert.deepStrictEqual(st.default, { siteId: 'a', model: 'ma' });
+  assert.throws(() => S.setDefault(st, 'a', '不存在'), /没有这个模型/);
+
+  // 停用默认站点 → default 自动清空
+  st = S.upsert(st, { id: 'a', baseURL: 'https://a/v1', models: [{ id: 'ma' }], enabled: false });
+  assert.strictEqual(st.default, null, '默认站点被停用后不能继续当默认');
+  const yml = S.buildOverlay(st);
+  assert.ok(!/agent-default-model/.test(yml), '不该写出默认模型条目');
+  assert.ok(!/^\s+a:$/m.test(yml), '停用站点不该出现在 providers 里');
+
+  // 就算硬把 default 塞回来，生成时也会跳过并留一行说明
+  const forced = { version: 1, default: { siteId: 'a', model: 'ma' }, sites: st.sites };
+  const yml2 = S.buildOverlay(forced);
+  assert.ok(!/- id: agent-default-model/.test(yml2));
+  assert.match(yml2, /默认模型指向的站点已停用或该模型已删除/);
+});
+
+test('停用清单里带我们自己的条目 id：必须过滤掉（否则会把 provider 覆盖层整块关掉）', () => {
+  const st = S.upsert(S.emptyState(), { id: 'a', baseURL: 'https://a/v1', models: [{ id: 'ma' }] });
+  const yml = S.buildOverlay(st, { disabled: ['llm-pi-ai', 'agent-default-model', 'ui-theme'] });
+  const providerEntries = yml.split('\n').filter((l) => l.trim() === '- id: llm-pi-ai').length;
+  assert.strictEqual(providerEntries, 1, 'provider 条目只应出现一次（作为我们自己的 providers 条目）');
+  const full = S.buildOverlay(S.setDefault(st, 'a', 'ma'), { disabled: ['agent-default-model'] });
+  assert.strictEqual(full.split('\n').filter((l) => l.trim() === '- id: agent-default-model').length, 1);
+  assert.match(yml, /- id: ui-theme\n  disabled: true/);
+});
+
 test('writeOverlay：写文件并回报路径', () => {
   const st = S.upsert(S.emptyState(), { id: 'w', baseURL: 'https://w/v1', models: [{ id: 'm' }] });
   const r = S.writeOverlay(st);

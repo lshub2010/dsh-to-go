@@ -217,12 +217,11 @@ async function cmdSet() {
 
   const state = { id, baseURL, api, keyEnv, models, compat, updated: new Date().toISOString() };
   const cleaned = writeOverlay(state);
-  secretLib.setKeyName(keyEnv);
 
   console.log('');
   console.log('  覆盖文件已写入：' + OVERLAY);
   if (cleaned) console.log('  顺手清理了旧版写在 profile patch 里的块（' + cleaned + ' 行），你的 UI 设置保留。');
-  console.log('  密钥变量名已设为：' + keyEnv + '（secrets\\key-name.txt）');
+  console.log('  密钥变量名（以站点表 keyEnv 为准，不再写全局 key-name.txt）：' + keyEnv + '（secrets\\key-name.txt）');
   if (fs.existsSync(secretLib.secretFile())) {
     console.log('  已存在加密密钥：不用重新输入，启动时会按新变量名 ' + keyEnv + ' 注入。');
   } else {

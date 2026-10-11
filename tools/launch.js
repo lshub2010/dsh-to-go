@@ -184,9 +184,13 @@ async function resolveKey(env, opts) {
       if (r.ok) {
         const missing = [];
         let injected = 0;
+        // 回退匹配按站点表的 id↔keyEnv 映射来查，而不是从变量名反推：
+        // 站点 id 常带连字符（my-relay），反推会得到 my_relay，永远对不上
+        const sitesState = sitesLib.readState();
+        const metaForName = (name) => r.meta.find((m) => m.keyName === name) ||
+          (() => { const s = sitesState.sites.find((x) => x.keyEnv === name); return s ? r.meta.find((m) => m.siteId === s.id) : null; })();
         for (const name of names) {
-          const meta = r.meta.find((m) => m.keyName === name) ||
-            r.meta.find((m) => m.siteId === String(name).replace(/_API_KEY$/, '').toLowerCase());
+          const meta = metaForName(name);
           if (meta && r.keys[meta.siteId] != null) { env[name] = r.keys[meta.siteId]; injected++; }
           else missing.push(name);
         }

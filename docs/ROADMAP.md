@@ -125,6 +125,34 @@ runtime\{current.txt,port.txt,npm-cache,agent-A,agent-B,node}
 
 每棒都必须：先写测试/先定义验收 → 实现 → 独立审查（找缺陷）→ 父代理实测（真启动或真安装，不看"代码看起来对"）。
 
+## 4.5 独立审查与修复记录（棒 1+2 之后）
+
+独立对抗性审查（子代理，只读）复现并确认了一批缺陷，已全部修掉并补了回归用例：
+
+| 级别 | 问题 | 修法 |
+|---|---|---|
+| 高 | 执行锁实际不成立：`acquireLock` 抢锁失败后**无条件覆盖锁**；且 `queued` 对 `isBusy` 不可见 → 两个安装可同时写同一个槽（审查已复现「两个任务同时 running」） | 持有者活着就直接失败、绝不覆盖锁；`queued` 也算占用；新增两条回归用例（背靠背创建、并发抢锁） |
+| 高 | `/api/key/clear` 缺 `siteId` 时**直接删掉整个密钥库**，无任何前置条件 | 删库必须显式 `confirm: "DELETE_ALL"` + 再验一次口令，否则 400；顺带让会话失效 |
+| 中 | 两套站点事实来源（`site.js`/`site.json` vs `sites.js`/`sites.json`），网页里配的站点启动器看不到 | 站点接口全部改走 `sites.js`；旧的 `/api/site` 保留但同样写 `sites.json`（单一写入者） |
+| 中 | 新代码仍在写已废弃的全局 `secrets\key-name.txt` | 去掉 `ui-server`/`site.js` 里的 `setKeyName` 调用 |
+| 中 | `sites.js probe` 把密钥放在**命令行参数**里 | 改从环境变量 `WZD_PROBE_KEY` 读 |
+| 中 | 后台安装会把用户设过的**网页端口悄悄改回 3180**（并覆盖构建记录） | 只在显式 `--port` 或首次时写端口；构建记录改为追加 |
+| 中 | `migrateLegacy` 口令不一致时**抛异常**，且会静默覆盖同名站点密钥 | 先校验口令 → 返回 `{ok:false,reason:'badpass'}`；目标已存在 → `{ok:false,reason:'exists'}`（要覆盖得显式 `overwrite`） |
+| 中 | 默认站点被停用后仍写出**悬空的** `agent-default-model` | 生成时校验「站点启用且模型存在」，否则跳过并留一行说明；`upsert`/`setDefault` 同步清空/拒绝 |
+| 低 | `running` 与 `pid` 分两次落盘 → 中间窗口会被别的进程误判成中断 | spawn 拿到 pid 后**一次性**写 `running+pid` |
+| 低 | PID 复用会让 `isBusy` 永远为真 | 加 3 小时兜底：跑太久按异常收掉；取消前用命令行核对 PID 身份 |
+| 低 | 日志截断破坏增量偏移、可能切断多字节字符 | 截断对齐行首/字符边界 + 递增 `logEpoch`；`readLog` 越界时明确返回 `reset:true` |
+| 低 | `pruneOld` 可能删掉还没跑的 `queued` 任务 | 排队中的永不删，且按实际删除数补足配额 |
+| 低 | 停用清单里带我们自己的条目 id 会把 provider 覆盖层整块关掉 | 生成时过滤掉 `llm-pi-ai` / `agent-default-model` |
+| 低 | `keyEnvFor` 碰撞（`a-b` 与 `a--b` 都得到 `A_B_API_KEY`） | `upsert` 时校验变量名唯一，撞了就明确报错要求改名 |
+| 低 | 启动器回退匹配从变量名反推，含连字符的站点 id 永远对不上 | 改成按站点表的 `id↔keyEnv` 映射匹配 |
+| 低 | 中断的安装任务不回滚，半装残留 | `reconcile` 对 interrupt 的安装任务同样触发回滚 |
+| 低 | `WZD_ROOT` 不被 `install.js`/`config.js` 认 | 两个脚本统一从 `WZD_ROOT` 解析根目录 |
+| 测试 | `tests/launch.test.js` 有一条**恒真的假测试**（名字叫 refreshOverlay，函数体没调用它） | 改成在独立进程 + 独立数据目录里真调用并断言返回 null |
+| 测试 | `PATH` 断言用 `||` 几乎恒真 | 改成断言前两项分别是便携 Node 与活动槽的 `.bin` |
+
+审查提出的「未验证假设」里，两条已由本次修复直接消除（悬空默认模型的真实行为、并发安装是否会写坏槽）；其余（PID 复用下 `process.kill(pid,0)` 的具体表现）保留了兜底而不是精确判定。
+
 ## 5. 视觉基线（ui-ux-pro-max 输出，实际采用部分）
 
 - 风格：Dark Mode (OLED)，深色优先；浅色不做默认。

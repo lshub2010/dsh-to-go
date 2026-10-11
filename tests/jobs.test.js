@@ -81,6 +81,39 @@ test('互斥：有任务在跑时第二次创建被拒绝（busy）', async () =
   assert.strictEqual(J.isBusy(), false, '取消后应空闲');
 });
 
+test('背靠背创建两个任务：第二个必须被拒（否则两个安装会同时写同一个槽）', async () => {
+  await ensureIdle();
+  const a = J.createJob('custom', custom('setTimeout(()=>{},1500)'));
+  const b = J.createJob('custom', custom('console.log("不该被创建")'));
+  assert.strictEqual(a.ok, true);
+  assert.strictEqual(b.ok, false, '排队中的任务也必须算「占用中」');
+  assert.strictEqual(b.busy, true);
+  assert.strictEqual(b.job.id, a.job.id);
+  const r = await J.runJob(a.job.id);
+  assert.strictEqual(r.ok, true);
+});
+
+test('执行锁：绕过 createJob 的检查并发跑两个任务时，只有一个能拿到锁', async () => {
+  await ensureIdle();
+  // 直接手写两条 queued 记录，模拟「两个进程几乎同时决定要跑」（审查里复现的那条路径）
+  const mk = (id) => {
+    fs.writeFileSync(path.join(J.JOBS_DIR, id + '.json'), JSON.stringify({
+      id, kind: 'custom', label: '并发探针', status: 'queued', opts: { cmd: [NODE, '-e', 'setTimeout(function(){},800)'] },
+      createdAt: new Date().toISOString(), startedAt: null, endedAt: null, pid: null, pre: null,
+    }), 'utf8');
+    fs.writeFileSync(path.join(J.JOBS_DIR, id + '.log'), '', 'utf8');
+    return id;
+  };
+  const id1 = mk('20200101000010-lockA');
+  const id2 = mk('20200101000011-lockB');
+  const [r1, r2] = await Promise.all([J.runJob(id1), J.runJob(id2)]);
+  const oks = [r1, r2].filter((r) => r.ok).length;
+  assert.strictEqual(oks, 1, '只应有一个任务真正跑起来：' + JSON.stringify([r1.ok, r2.ok]));
+  const loser = (r1.ok ? r2 : r1);
+  assert.match(String((loser.job && loser.job.message) || loser.error || ''), /执行锁|另一个窗口/);
+  await ensureIdle();
+});
+
 test('失败任务：非零退出码 → failed，并保留退出码与错误信息', async () => {
   await ensureIdle();
   const c = J.createJob('custom', custom('console.error("炸了");process.exit(3)'));
@@ -109,16 +142,27 @@ test('取消任务：状态变 cancelled，子进程不再存活', async () => {
   assert.strictEqual(alive, false, '子进程应已被杀掉');
 });
 
-test('中断识别：标着 running 但进程已不在的任务会被标成 interrupted', async () => {
+test('中断识别：进程已不在 / 挂太久 都会被收拾成 interrupted', async () => {
+  // 情况一：标着 running 但进程已经不在
   const id = '20200101000000-dead';
   fs.writeFileSync(path.join(J.JOBS_DIR, id + '.json'), JSON.stringify({
     id, kind: 'custom', label: '假任务', status: 'running', pid: 999999,
-    startedAt: '2020-01-01T00:00:00.000Z', opts: {},
+    startedAt: new Date().toISOString(), opts: {},
   }), 'utf8');
   const found = J.listJobs(50).find((j) => j.id === id);
   assert.ok(found);
   assert.strictEqual(found.status, 'interrupted');
   assert.match(String(found.message), /进程已不在/);
+
+  // 情况二：进程还活着（PID 复用场景）但已经跑得离谱地久 → 兜底收掉，否则 isBusy 永远为真
+  const id2 = '20200101000001-stuck';
+  fs.writeFileSync(path.join(J.JOBS_DIR, id2 + '.json'), JSON.stringify({
+    id: id2, kind: 'custom', label: '卡住的假任务', status: 'running', pid: process.pid,
+    startedAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(), opts: {},
+  }), 'utf8');
+  const found2 = J.listJobs(50).find((j) => j.id === id2);
+  assert.strictEqual(found2.status, 'interrupted');
+  assert.match(String(found2.message), /超过 3 小时/);
 });
 
 test('参数校验：install-slot 缺版本/槽名非法都被拒', () => {
