@@ -136,6 +136,8 @@ runtime\node\node.exe tools\plugins.js setup-pnpm  :: 把 pnpm 装到本盘
 - 哨兵 `runtime\.drive-id` 跟着盘走（不是 `data\`，也不算用户数据）。删它 = 触发守护。
 - 丢盘记录写宿主：`%LOCALAPPDATA%\Temp\dsh-to-go\drive-lost.json`（只留最近 8 条）。
   这是「不碰宿主」规则的一个明确例外——盘都没了，只能写宿主；除此之外仍然不许往宿主写任何东西。
+- **一次真拔盘会留下两条记录**：`ui-server` 与 `launch.js` 各自都有守护，谁先判定是竞态（谁先谁后都正常，别当 bug）。
+  页面横幅显示的是最后一条，两条的意思一样（都是「盘没了」）。
 - 页面上的体现：概览顶部横幅（`#banner`）+ 诊断页「拔盘守护」卡片 + `/api/drive-lost/clear`（要解锁）。
 
 ## 10. 提交约定
