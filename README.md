@@ -39,7 +39,7 @@ build.cmd        :: 下载并校验便携 Node，然后自动打开图形向导
 
 ```bat
 dsh-ui.cmd       :: 图形入口（向导 + 概览 / 站点和模型 / 升级 / 诊断 / 插件）
-dsh.cmd          :: 直接起 dsh 的 Web UI（已配好时最快）
+build.cmd        :: 一次性构建（第一次插盘时用）
 ```
 
 **要求**：Windows 10/11 x64；2 GB 空闲空间；构建时需要联网。**运行时不要求宿主装 Node。**
@@ -50,15 +50,17 @@ dsh.cmd          :: 直接起 dsh 的 Web UI（已配好时最快）
 
 ```
 dsh-to-go\
+├─ dsh-ui.cmd               日常唯一入口：图形页（向导 + 概览 / 站点和模型 / 升级 / 诊断 / 插件）
 ├─ build.cmd                一次性构建（无依赖引导）
-├─ dsh.cmd                  日常入口：起 Web UI（默认 3180）并开浏览器
-├─ dsh-cli.cmd              命令行入口：dsh --version / headless "任务" …
-├─ dsh-config.cmd           维护台（终端菜单）
-├─ dsh-ui.cmd               图形页（浏览器）
-├─ dsh-doctor.cmd           一键自检
+├─ tools\rescue\            应急脚本（图形页/服务出问题时才用）
+│   ├─ dsh.cmd              直接起 dsh 自己的 Web UI（不走我们的服务）
+│   ├─ dsh-cli.cmd          命令行 / headless 用法
+│   ├─ dsh-config.cmd       终端维护台（菜单）
+│   └─ dsh-doctor.cmd       一键自检
 ├─ runtime\                 构建产物（不进 git）
 │   ├─ node\                便携 Node
 │   ├─ agent-A\ agent-B\    两个 dsh 槽（各有自己的 node_modules）
+│   ├─ pnpm\ pnpm-store\    盘上 pnpm（装卸插件用，按需安装）
 │   ├─ npm-cache\           盘内 npm 缓存
 │   ├─ current.txt          当前活动槽
 │   └─ port.txt             网页端口
@@ -71,28 +73,30 @@ dsh-to-go\
 
 ## 入口
 
-图形向导（`dsh-ui.cmd`）是主入口，命令行工具保留作备用：
+**根目录只有两个脚本**：日常双击 `dsh-ui.cmd`；第一次插盘（或换盘重建）用 `build.cmd`。
+其余命令行工具全部收进 `tools\rescue\`，**只在图形页/服务出问题时才需要**（应急用）。
 
 | 入口 | 用途 |
 |---|---|
-| `dsh-ui.cmd` | **图形入口**：首次向导 + 概览 / 站点和模型 / 升级 / 诊断 / 插件（插件页在做） |
-| `dsh.cmd` | 起 dsh 自己的 Web UI：解锁密钥 → 选活动槽 → 校验站点覆盖层 → 起服务并开浏览器 |
-| `dsh-cli.cmd` | 不打开界面的用法：`dsh-cli.cmd --version`、`dsh-cli.cmd headless "改个 bug"` |
-| `dsh-config.cmd` | 终端维护台：自检 / 升级 / 切槽 / 备份 / 密钥 / 站点配置 / 打开图形页 |
-| `dsh-doctor.cmd` | 一键体检：Node、槽位、端口、密钥、站点、残留进程、宿主污染 |
+| `dsh-ui.cmd` | **图形入口（日常就用它）**：首次向导 + 概览 / 站点和模型 / 升级 / 诊断 / 插件 |
+| `build.cmd` | 一次性构建：下便携 Node、装 dsh 到 A/B 槽、初始化配置 |
+| `tools\rescue\dsh.cmd` | 应急：直接起 dsh 自己的 Web UI（绕过我们的服务，锁端口那类问题用它对照） |
+| `tools\rescue\dsh-cli.cmd` | 不打开界面的用法：`tools\rescue\dsh-cli.cmd --version`、`tools\rescue\dsh-cli.cmd headless "改个 bug"` |
+| `tools\rescue\dsh-config.cmd` | 终端维护台：自检 / 升级 / 切槽 / 备份 / 密钥 / 站点配置 / 打开图形页 |
+| `tools\rescue\dsh-doctor.cmd` | 一键体检：Node、槽位、端口、密钥、站点、残留进程、宿主污染 |
 
 ## 密钥是怎么保住的
 
 选的是「**盘上放密文，口令不落盘**」的方案：
 
-1. 首次在图形向导里设置口令（命令行则是 `dsh-config.cmd → 5) key`）：口令不回显、不落盘，只存在服务进程内存里
+1. 首次在图形向导里设置口令（命令行则是 `tools\rescue\dsh-config.cmd → 5) key`）：口令不回显、不落盘，只存在服务进程内存里
 2. 用 `scrypt` 从口令派生密钥，`aes-256-gcm` 加密后写入 `secrets\keys.enc`——这是**多站点密钥库**，每个站点一条记录
 3. 启动时解密，**只注入当前进程环境变量**（`launch.js` 内 `set`，绝不用 `setx`），不写回 `data\`、不进命令行参数、不进日志
 4. 每个站点的密钥对应自己的变量名（默认 `<站点ID>_API_KEY`，可在页面里改）——在官方源和中转之间切换只改站点地址，**密钥不用重新输入**
 5. 删站点时可以只删站点、保留密钥；删**整个**密钥库必须显式确认再验一次口令（防误删）
 6. 密钥库文件若损坏（截断/被改坏），写入会被**拒绝**而不是用空库覆盖——不留"密钥全没了"的静默故障
 
-**换机器/换人用**：口令不对就是解不开，在页面或 `dsh-config.cmd → 5` 重设即可。**盘丢了**：密文 + 口令双重门槛，比明文 YAML 强得多；但请自行判断口令强度。
+**换机器/换人用**：口令不对就是解不开，在页面或 `tools\rescue\dsh-config.cmd → 5` 重设即可。**盘丢了**：密文 + 口令双重门槛，比明文 YAML 强得多；但请自行判断口令强度。
 
 ## 站点配置（官方 / 中转 / 自建）
 
@@ -125,7 +129,7 @@ dsh 自己的凭据分层是「启动环境 > `.credentials.yaml` > 项目 `.env
 | `error: --profile <name> is required` | dsh 的参数解析不接受「启动器标记 + 裸命令名」的顺序（`--patch f web` 会被拒）。启动器现在把标记插在 profile/命令之后（`--profile web --patch f …`、`web --patch f …` 均可）。 |
 | 中文提示在命令行里变乱码/截断 | `cmd.exe` 用系统 ANSI（中文机器是 GBK）解析 `.bat`，UTF-8 中文会破坏行与括号配对。所以所有 `.cmd` 保持**纯 ASCII**，中文提示放在 `tools\msg\*.txt`（UTF-8）里由 `tools\say.cmd` 打印。 |
 | 宿主上也装了 dsh，两边互相打架 | 共享的是端口（宿主默认 3080，本盘用 3180）、浏览器 cookie（类型按 host+port 哈希，所以分端口即分登录）与 PATH/模块解析。启动器对 `DSH_HOME`/`DSH_AGENTS_HOME`/`npm_config_cache` 等**无条件覆盖**，并且从不碰宿主的 `C:\Users\<你>\.agents`。 |
-| 端口被占就直接起不来 | 实测 dsh 端口冲突时**不会自动换端口**，直接 `EADDRINUSE` 退出。改端口：图形页「诊断」里改，或 `dsh-config.cmd → 4`。 |
+| 端口被占就直接起不来 | 实测 dsh 端口冲突时**不会自动换端口**，直接 `EADDRINUSE` 退出。改端口：图形页「诊断」里改，或 `tools\rescue\dsh-config.cmd → 4`。 |
 | 升级后想退回去 | 改 `runtime\current.txt` 一行（或维护台 `3) switch`）。两个槽各自独立，随时互切。 |
 
 ## 自己构建时都发生了什么

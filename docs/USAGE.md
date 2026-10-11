@@ -9,11 +9,13 @@
 
 ```
 deepseek-harness\
-├─ dsh.cmd            ← 日常入口：启动 Web UI（默认端口 3180）并打开浏览器
-├─ dsh-cli.cmd        ← 命令行入口：dsh-cli.cmd headless "任务" / --version / --profile xxx
-├─ dsh-config.cmd     ← 维护台：自检 / 升级 / 切换槽位 / 备份 / 设置密钥
-├─ dsh-doctor.cmd     ← 一键自检
-├─ dsh-ui.cmd         ← 图形页（浏览器里配置，推荐）
+├─ dsh-ui.cmd         ← 日常唯一入口：图形页（浏览器里配置，推荐）
+├─ build.cmd          ← 一次性构建（第一次插盘时用）
+├─ tools\rescue\          ← 应急脚本（图形页/服务出问题时才用）
+│   ├─ dsh.cmd        ← 直接起 dsh 自己的 Web UI
+│   ├─ dsh-cli.cmd    ← 命令行：headless "任务" / --version / --profile xxx
+│   ├─ dsh-config.cmd ← 维护台：自检 / 升级 / 切换槽位 / 备份 / 设置密钥
+│   └─ dsh-doctor.cmd ← 一键自检
 ├─ runtime\           【代码层】升级时整体替换，删掉不影响数据
 │   ├─ node\          便携 Node v26.7.0（官方 win-x64 发行版解压版）
 │   ├─ agent-A\       dsh 0.2.0-rc.2（当前空闲槽＝回滚目标）
@@ -40,7 +42,7 @@ deepseek-harness\
 > **推荐走图形页**：双击 `dsh-ui.cmd`（或维护台 `9) 打开图形页`）→ 浏览器打开本地页面：首次是向导（设置口令 → 站点与密钥 → 选版本安装 → 启动），之后是概览 / 站点和模型 / 升级 / 诊断 / 插件五个分区。
 > 页面上三个省事的地方：**密钥框里已有密钥会显示成一行 `*`**（长度提示，留空即不修改）；**模型用表单加**（先「拉取模型」再点箭头点选，也能直接手输；每个模型可设上下文与视觉）；**版本从列表里选**（实时从 npm 取，不用记版本号）。命令行方式如下。
 
-1. **存密钥**：双击 `dsh-config.cmd` → 选 `5) key` → 输入两遍口令（不落盘）＋粘贴 API key（隐藏输入）。
+1. **存密钥**：双击 `tools\rescue\dsh-config.cmd` → 选 `5) key` → 输入两遍口令（不落盘）＋粘贴 API key（隐藏输入）。
    结果：`secrets\keys.enc`（多站点密钥库），里面只有密文。**口令和密钥都不写进 `data\`，也不进命令行参数。**
    图形页里同一个位置会显示成一行 `*`（表示"已保存、多少位"）；**留空提交就是"不修改"**，不会被那串星号覆盖。
    - 如果你的站点是**中转/网关（非官方 DeepSeek）**：先做 `7) 站点/模型` 再存密钥，这样注入的变量名会与站点要求的 `apiKeyEnv` 一致。
@@ -51,9 +53,9 @@ deepseek-harness\
 命令行用法示例：
 
 ```
-dsh-cli.cmd --version
-dsh-cli.cmd headless "总结这个仓库的主要模块"
-dsh-cli.cmd --profile web --help
+tools\rescue\dsh-cli.cmd --version
+tools\rescue\dsh-cli.cmd headless "总结这个仓库的主要模块"
+tools\rescue\dsh-cli.cmd --profile web --help
 dsh.cmd --no-key            ← 跳过密钥直接启动（只验证界面/配置时用）
 ```
 
@@ -65,13 +67,13 @@ dsh.cmd --no-key            ← 跳过密钥直接启动（只验证界面/配�
 - 边界（务必知道）：
   - 这防的是「**U 盘丢了 / 换机器留下痕迹**」，**不防 agent 本身**——dsh 官方文档也写明，agent 的工具进程与你是同一个 OS 用户，文件权限无法把机密对它隔离。
   - 环境层在 dsh 界面里是**只读**的，而且要**重启 dsh 才能换密钥**（启动环境是启动瞬间的快照）。
-  - 密钥泄露风险由你自己承担，建议用一把**低额度、可随时吊销**的 key；要换 key 就重跑 `dsh-config.cmd → 5`。
+  - 密钥泄露风险由你自己承担，建议用一把**低额度、可随时吊销**的 key；要换 key 就重跑 `tools\rescue\dsh-config.cmd → 5`。
   - 想要更强的静态保护，就把整块盘上 BitLocker To Go / VeraCrypt（本方案与它们叠加不冲突）。
 
 ## 4. 升级与回滚（A/B 双槽）
 
 ```
-dsh-config.cmd
+tools\rescue\dsh-config.cmd
   2) upgrade   → 输入目标版本（如 0.2.1-alpha.2 / latest / alpha）
   3) switch    → 立即切到另一槽（秒级回滚）
 ```
@@ -80,7 +82,7 @@ dsh-config.cmd
 
 - 实测耗时：首次（冷缓存）**5 分 28 秒**；复用盘上缓存后 **2 分 09 秒**。
 - 手工回滚：把 `runtime\current.txt` 改成另一槽名即可，不需要重装。
-- 离线升级：在有网机器上 `npm pack @deepseek-ai/dsh@版本` 拿到 `.tgz`，拷进 `runtime\` 后 `dsh-config.cmd → 6` 查看命令，或在槽目录里用 `--offline` 安装（依赖已缓存在 `runtime\npm-cache`）。
+- 离线升级：在有网机器上 `npm pack @deepseek-ai/dsh@版本` 拿到 `.tgz`，拷进 `runtime\` 后 `tools\rescue\dsh-config.cmd → 6` 查看命令，或在槽目录里用 `--offline` 安装（依赖已缓存在 `runtime\npm-cache`）。
 - **不要跟随 `@alpha` 漂移**：dsh 处于 developer preview，明确会破坏兼容；升级请显式给版本号，并先备份。
 
 ## 8. 插件（启停 / 装卸）
@@ -99,7 +101,7 @@ dsh-config.cmd
 
 ## 9. 换机器 / 换盘符
 
-- 所有路径都由 `%~dp0` 推导 → **F: 换成 G:/E:/X: 都能跑**（已用 `subst X:` 实测：`X:\dsh-cli.cmd --version` 正常，`DSH_HOME=X:\data`）。
+- 所有路径都由 `%~dp0` 推导 → **F: 换成 G:/E:/X: 都能跑**（已用 `subst X:` 实测：`X:\tools\rescue\dsh-cli.cmd --version` 正常，`DSH_HOME=X:\data`）。
 - 数据层、npm 缓存、密钥都在盘上，插到新机器不用重装任何东西。
 - **仅限 Windows x64**：依赖里有 `node-pty` / `sharp` / `@swc` 原生模块，平台绑定。要给 Mac/Linux 用，得按平台各放一份 runtime（本布局支持，加 `runtime\node-<平台>` 与槽目录即可）。
 - 盘的文件系统 NTFS/exFAT 都行（本方案不用 junction/符号链接）。
@@ -122,7 +124,7 @@ dsh-config.cmd
 
 官方 DeepSeek 之外的站点不是"换个密钥"就完事：dsh 需要知道**端点地址、协议、模型清单**，而且这类网关通常有两处必须修正的请求格式。
 
-**推荐做法**：`dsh-config.cmd → 7) 站点/模型`，依次回答：
+**推荐做法**：`tools\rescue\dsh-config.cmd → 7) 站点/模型`，依次回答：
 
 | 问题 | 说明 |
 |---|---|
@@ -158,12 +160,12 @@ runtime\node\node.exe tools\site.js dump
 - 想让网关后面的 DeepSeek 真正"关闭思考"：需要 `compat.thinkingFormat: deepseek`，当前配置器还没提供这个开关——手工加到 `data\site-patch.yml` 里站点 provider 的 `compat:` 段即可。注意：再跑一次站点配置（或图形页点「保存站点」）会重写这个文件，手工项会丢，所以改完就不要再重配站点。
 - 一个 provider 只能一种协议；中转同时给 OpenAI 与 Anthropic 两套接口 → 建两个站点。
 
-**换/清站点**：`dsh-config.cmd → 8) 站点查看`（输 `c` 清除），重配再走一次 7。
+**换/清站点**：`tools\rescue\dsh-config.cmd → 8) 站点查看`（输 `c` 清除），重配再走一次 7。
 
 ## 8. 维护命令速查
 
 ```
-dsh-doctor.cmd                                   # 全量自检（空间/槽/端口/密钥/宿主泄漏）
+tools\rescue\dsh-doctor.cmd                                   # 全量自检（空间/槽/端口/密钥/宿主泄漏）
 runtime\node\node.exe tools\launch.js selftest    # 预检报告，不起 agent
 runtime\node\node.exe tools\secret.js status      # 密钥状态（不打印密钥）
 runtime\node\node.exe tools\secret.js selftest    # 加密自检：往返/错误口令/明文泄漏

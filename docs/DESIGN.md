@@ -90,7 +90,7 @@ Git 侧用 `.gitattributes` 固定 `*.cmd eol=crlf`，避免有人在 Linux/macO
 
 | 项 | 期望 |
 |---|---|
-| `dsh-doctor.cmd` | 0 失败（端口被自己正开着的实例占用算已知警告） |
+| `tools\rescue\dsh-doctor.cmd` | 0 失败（端口被自己正开着的实例占用算已知警告） |
 | 启动器自检 `launch.js selftest` | Node/槽位/端口/密钥/覆盖层/临时目录全部打印正常 |
 | 真启动 Web UI | 首页 200、标题正确、带 token 才能开、无 token 401/403 |
 | 宿主零残留 | `C:\Users\<你>\.dsh` 与 `.agents` 不因本盘启动而被创建/修改 |

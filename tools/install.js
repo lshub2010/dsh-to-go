@@ -186,7 +186,7 @@ function main() {
     '网页端口   : ' + opt.port,
     'npm 源     : ' + (opt.registry || NPM_MIRRORS.map((r) => r.url).join(' → ')),
     '',
-    '升级：dsh-config.cmd → 2，或图形配置页「槽位与升级」页',
+    '升级：tools\rescue\dsh-config.cmd → 2，或图形配置页「槽位与升级」页',
     '回滚：把 runtime\\current.txt 改成另一个槽名即可',
   ].join('\n') + '\n';
   // 已有构建记录时不要覆盖（里面可能有升级历史），只追加一行
@@ -201,8 +201,8 @@ function main() {
   say('全部完成。活动槽 ' + active + '（dsh ' + installedVersion(active) + '）');
   console.log('');
   console.log('  下一步：');
-  console.log('    1) 双击 dsh-config.cmd  → 5) key 存密钥（或先用 dsh-ui.cmd 打开图形配置页）');
-  console.log('    2) 双击 dsh-config.cmd  → 7) site 配站点（官方 / 中转 / 自建都在这）');
+  console.log('    1) 双击 tools\rescue\dsh-config.cmd  → 5) key 存密钥（或先用 dsh-ui.cmd 打开图形配置页）');
+  console.log('    2) 双击 tools\rescue\dsh-config.cmd  → 7) site 配站点（官方 / 中转 / 自建都在这）');
   console.log('    3) 双击 dsh.cmd 启动；首次启动会在 data\\ 下建会话与工作区');
   console.log('');
   return 0;

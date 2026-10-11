@@ -149,5 +149,5 @@ Start-Sleep -Seconds 3
 Write-Host ''
 Write-Host '  图形向导已经启动（浏览器里是 127.0.0.1 的本地页面）。'
 Write-Host '  流程：设置口令 → 添加站点与密钥 → 选版本安装 → 启动 dsh。'
-Write-Host '  也可以随时用 dsh-ui.cmd 重新打开这个页面；命令行维护台是 dsh-config.cmd。'
+Write-Host '  也可以随时用 dsh-ui.cmd 重新打开这个页面；命令行维护台是 tools\rescue\dsh-config.cmd。'
 Write-Host ''

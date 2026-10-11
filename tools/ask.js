@@ -3,7 +3,7 @@
  * One prompt helper for every tool in this bundle.
  *
  * Why it is not just `readline.question`: when stdin is a pipe or a file
- * (scripted runs, `echo 0 | dsh-config.cmd`) readline does not keep the event
+ * (scripted runs, `echo 0 | tools\rescue\dsh-config.cmd`) readline does not keep the event
  * loop alive, so Node exits silently in the middle of a multi-question flow
  * after the first answer. A non-TTY stdin is therefore read up front and
  * answered from memory; a real console still gets normal line editing.

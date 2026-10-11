@@ -9,8 +9,8 @@ rem  can be chopped mid-sequence and corrupt the parser.
 rem ============================================================
 chcp 65001 >nul
 setlocal
-set "HERE=%~dp0"
-if "%HERE:~-1%"=="\" set "HERE=%HERE:~0,-1%"
+rem  Two levels up from here is the repo root.
+for %%I in ("%~dp0..\..") do set "HERE=%%~fI"
 
 set "NODE=%HERE%\runtime\node\node.exe"
 if not exist "%NODE%" (

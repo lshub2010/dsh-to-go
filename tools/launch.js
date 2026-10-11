@@ -173,7 +173,7 @@ async function resolveKey(env, opts) {
   if (!fs.existsSync(file) && !fs.existsSync(legacy)) {
     console.log('\n【启动器】还没有配置加密密钥：' + file);
     console.log('【启动器】dsh 仍会启动，但模型请求会以 MISSING_CREDENTIAL 失败。');
-    console.log('【启动器】请运行 dsh-config.cmd → 5) key，或用 dsh-ui.cmd 打开图形配置页。');
+    console.log('【启动器】请运行 tools\rescue\dsh-config.cmd → 5) key，或用 dsh-ui.cmd 打开图形配置页。');
     const a = (await ask('无密钥继续启动？[Y/n] ')).toLowerCase();
     if (a === 'n' || a === 'no') process.exit(0);
     return env;

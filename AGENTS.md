@@ -19,7 +19,8 @@
 
 ## 2. 约定（改代码前先读）
 
-1. **网页向导是唯一入口**：`dsh-ui.cmd` 起本地页面（首次向导 + 概览 / 站点和模型 / 升级 / 诊断 / 插件）。命令行工具（`dsh-config.cmd` 等）保留作备用，但**新功能优先做进页面**。
+1. **网页向导是唯一入口**：`dsh-ui.cmd` 起本地页面（首次向导 + 概览 / 站点和模型 / 升级 / 诊断 / 插件）。
+   **根目录只放 `dsh-ui.cmd` 和 `build.cmd`**——其余命令行工具一律进 `tools\rescue\`（应急用），新脚本也别往根目录加。命令行工具保留作备用，但**新功能优先做进页面**。
 2. **站点表是唯一事实来源**：`data\sites.json`。`data\site-patch.yml` 是由它生成的覆盖层；`data\site.json` 是旧格式，只在读取时兼容、不再写入。旧的 `/api/site` 接口已下线（返回 410），别加回来。
 3. **密钥三条红线**：不明文落盘、不进命令行参数、不进日志。口令只存在服务进程内存（`/api/login` 之后），启动 dsh 时经**子进程环境变量**传给启动器。
 4. **上游文件不要碰**：`data\profiles\*\cordis.patch.yml` 永远归 dsh 与其 Web UI 所有；我们的配置一律走自己的覆盖层（`--patch`）。
@@ -33,10 +34,11 @@
 ```
 build.cmd / build.ps1     一次性构建：下载并校验便携 Node，然后打开图形向导（-Cli 走命令行双槽安装）
 dsh.cmd                   启动 dsh 自己的 Web UI
-dsh-ui.cmd                图形向导与主页面（本地服务，127.0.0.1）
-dsh-config.cmd            终端维护台（自检/升级/切槽/备份/密钥/站点）
-dsh-cli.cmd               命令行用法（--version、headless "任务"）
-dsh-doctor.cmd            一键自检
+dsh-ui.cmd                图形向导与主页面（本地服务，127.0.0.1）—— 根目录另一个是 build.cmd
+tools\rescue\          应急脚本目录（平时用不到；改这几个脚本要注意它们靠 %~dp0..\.. 找仓库根目录）
+  tools\rescue\dsh-config.cmd          终端维护台（自检/升级/切槽/备份/密钥/站点）
+  tools\rescue\dsh-cli.cmd             命令行用法（--version、headless "任务"）
+  tools\rescue\dsh-doctor.cmd          一键自检
 tools/
   launch.js               启动器：解锁密钥 → 组环境 → 注入覆盖层 → 起 dsh
   sites.js                多站点表 + 覆盖层生成 + /models 探测
