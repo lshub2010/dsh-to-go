@@ -13,7 +13,9 @@
 #   -Port <端口>             网页端口（默认 3180）
 #   -Registry <url>          只用一个 npm 源
 #   -Target <目录>           构建到别的目录（默认本仓库）
-#   -SkipChecksum            跳过 Node 包校验（不建议）
+#   -SkipChecksum            跳过 Node 校验和（不建议）
+#   -Cli                     不用图形向导，直接在命令行把两个槽装好（CI/离线批量用）
+#   -NoOpen                  只启图形服务、不自动打开浏览器（自动化用）
 #
 # 需要：Windows 10/11 + 自带 PowerShell 5.1 起（无需预装 Node）
 
@@ -25,7 +27,9 @@ param(
   [int]$Port = 3180,
   [string]$Registry = '',
   [string]$Target = '',
-  [switch]$SkipChecksum
+  [switch]$SkipChecksum,
+  [switch]$Cli,
+  [switch]$NoOpen
 )
 
 $ErrorActionPreference = 'Stop'
@@ -112,17 +116,38 @@ if (Test-Path $NodeExe) {
   Say ('便携 Node 就绪：' + (& $NodeExe -v))
 }
 
-# ---- 4. 交给 install.js ----
-$install = Join-Path $Target 'tools\install.js'
-if (-not (Test-Path $install)) { Fail "找不到构建脚本：$install" }
-$argv = @($install, '--a', $VersionA, '--port', "$Port")
-if ($Single) { $argv += '--single' } else { $argv += @('--b', $VersionB) }
-if ($Registry) { $argv += @('--registry', $Registry) }
+# ---- 4. 默认交给图形向导；-Cli 才走命令行整套安装 ----
+if ($Cli) {
+  $install = Join-Path $Target 'tools\install.js'
+  if (-not (Test-Path $install)) { Fail "找不到构建脚本：$install" }
+  $argv = @($install, '--a', $VersionA, '--port', "$Port")
+  if ($Single) { $argv += '--single' } else { $argv += @('--b', $VersionB) }
+  if ($Registry) { $argv += @('--registry', $Registry) }
 
-Say '开始安装 dsh…'
-& $NodeExe @argv
-$rc = $LASTEXITCODE
-if ($rc -ne 0) { Fail "install.js 返回 $rc，构建未完成。" }
+  Say '开始安装 dsh…'
+  & $NodeExe @argv
+  $rc = $LASTEXITCODE
+  if ($rc -ne 0) { Fail "install.js 返回 $rc，构建未完成。" }
+
+  Write-Host ''
+  Write-Host '  构建完成。'
+  return
+}
+
+# 构建器只负责把运行环境准备好（Node）；版本安装、站点与密钥都在网页向导里做，
+# 这样用户第一次打开就是完整流程，不需要再去记命令行参数。
+$ui = Join-Path $Target 'tools\ui-server.js'
+if (-not (Test-Path $ui)) { Fail "找不到图形服务：$ui" }
+
+Say '便携 Node 已就绪，下面打开图形向导（版本安装也在页面里完成）。'
+$args2 = @("`"$ui`"")
+if ($NoOpen) { $args2 += '--no-open' }
+if ($Port -ne 3180) { $args2 += @('--port', "$Port") }
+Start-Process -FilePath $NodeExe -ArgumentList $args2 -WorkingDirectory $Target
+Start-Sleep -Seconds 3
 
 Write-Host ''
-Write-Host '  构建完成。'
+Write-Host '  图形向导已经启动（浏览器里是 127.0.0.1 的本地页面）。'
+Write-Host '  流程：设置口令 → 添加站点与密钥 → 选版本安装 → 启动 dsh。'
+Write-Host '  也可以随时用 dsh-ui.cmd 重新打开这个页面；命令行维护台是 dsh-config.cmd。'
+Write-Host ''

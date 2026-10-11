@@ -1,7 +1,7 @@
 @echo off
 rem ============================================================
 rem  Portable DeepSeek Harness - graphical configuration page
-rem  Serves ui\config.html on 127.0.0.1 and opens it in the browser.
+rem  Serves ui\app.html on 127.0.0.1 and opens it in the browser.
 rem  Keep this file pure ASCII (see dsh.cmd for the reason).
 rem ============================================================
 chcp 65001 >nul

@@ -1,6 +1,9 @@
 @echo off
 rem ============================================================
-rem  dsh-to-go - one-time build (portable Node + dsh into 2 slots)
+rem  dsh-to-go - one-time build: downloads portable Node (verified),
+rem  then opens the graphical wizard, where you pick versions and
+rem  install them in the browser. Use "-Cli" for the old fully
+rem  automatic two-slot install, "-NoOpen" to skip opening the browser.
 rem  Keep this file pure ASCII: cmd.exe parses .bat with the
 rem  system ANSI code page, so UTF-8 text here breaks the file.
 rem ============================================================

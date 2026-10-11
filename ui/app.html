@@ -1,0 +1,848 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh-to-go · 便携版 DeepSeek Harness</title>
+<style>
+/* 设计基线来自 ui-ux-pro-max 的 Dark Mode (OLED)：深色优先、低发白、高对比。
+   字体只用系统自带（U 盘可能离线，不能依赖外链字体）。 */
+:root{
+  --bg:#0F172A; --card:#1B2336; --card-2:#151D2E; --primary:#1E293B; --secondary:#334155;
+  --fg:#F8FAFC; --muted:#94A3B8; --border:#475569; --accent:#22C55E; --on-accent:#0F172A;
+  --danger:#EF4444; --warn:#F59E0B; --code:#0B1220;
+  --r:10px; --gap:14px;
+  --font-ui:"IBM Plex Sans","Microsoft YaHei UI","PingFang SC",system-ui,Segoe UI,sans-serif;
+  --font-mono:"JetBrains Mono",Consolas,"Cascadia Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font:14px/1.6 var(--font-ui)}
+a{color:var(--accent)}
+code,pre,.mono{font-family:var(--font-mono)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+header{display:flex;gap:var(--gap);align-items:center;justify-content:space-between;flex-wrap:wrap;
+  padding:16px 20px;background:var(--card);border-bottom:1px solid var(--border)}
+h1{margin:0;font-size:17px;display:flex;align-items:center;gap:8px}
+h2{margin:0 0 10px;font-size:15px}
+h3{margin:0 0 8px;font-size:13.5px;color:var(--muted);font-weight:600}
+.sub{color:var(--muted);font-size:12.5px}
+nav{display:flex;gap:4px;flex-wrap:wrap;padding:10px 20px;background:var(--card-2);
+  border-bottom:1px solid var(--border);position:sticky;top:0;z-index:20}
+nav button{display:flex;align-items:center;gap:6px;min-height:40px;background:transparent;border:1px solid transparent;
+  color:var(--muted);padding:8px 14px;border-radius:var(--r);transition:background .18s,color .18s,border-color .18s}
+nav button:hover{background:var(--primary);color:var(--fg)}
+nav button[aria-selected="true"]{background:var(--primary);border-color:var(--border);color:var(--fg);font-weight:600}
+main{padding:18px 20px 80px;max-width:1080px;margin:0 auto}
+section[hidden]{display:none}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;margin-bottom:var(--gap)}
+.card.tight{padding:12px 14px}
+.grid{display:grid;grid-template-columns:170px 1fr;gap:6px 14px;align-items:baseline}
+.grid > div:nth-child(odd){color:var(--muted)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.row > .f{flex:1 1 200px;min-width:160px}
+label{display:block;margin:10px 0 4px;color:var(--muted);font-size:12.5px}
+input,select,textarea{width:100%;min-height:40px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;
+  background:var(--bg);transition:border-color .18s}
+input:hover,select:hover,textarea:hover{border-color:var(--secondary)}
+textarea{min-height:72px;font-family:var(--font-mono);font-size:12.5px}
+input[type=checkbox],input[type=radio]{width:auto;min-height:0;margin-right:6px;vertical-align:middle}
+.btn{display:inline-flex;align-items:center;gap:7px;min-height:40px;padding:9px 16px;border-radius:var(--r);
+  border:1px solid var(--border);background:var(--primary);color:var(--fg);transition:background .18s,border-color .18s,opacity .18s}
+.btn:hover{background:var(--secondary)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{background:transparent;border-color:var(--danger);color:var(--danger)}
+.btn.danger:hover{background:rgba(239,68,68,.12)}
+.btn[disabled]{opacity:.5;cursor:progress}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:2px 10px;border-radius:999px;border:1px solid var(--border);
+  font-size:12px;color:var(--muted)}
+.pill.ok{color:var(--accent);border-color:rgba(34,197,94,.5)}
+.pill.warn{color:var(--warn);border-color:rgba(245,158,11,.5)}
+.pill.bad{color:var(--danger);border-color:rgba(239,68,68,.5)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block}
+.dot.on{background:var(--accent);box-shadow:0 0 8px rgba(34,197,94,.8)}
+.dot.off{background:var(--secondary)}
+pre{background:var(--code);border:1px solid var(--border);border-radius:8px;padding:12px;overflow:auto;
+  max-height:320px;font-size:12.5px;white-space:pre-wrap;word-break:break-all}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:12.5px}
+td.mono{font-family:var(--font-mono);font-size:12.5px}
+.flash{margin-top:10px;padding:9px 12px;border-radius:8px;border:1px solid var(--border);display:none;white-space:pre-wrap}
+.flash.on{display:block}
+.flash.ok{border-color:rgba(34,197,94,.5);color:var(--accent)}
+.flash.err{border-color:rgba(239,68,68,.5);color:var(--danger)}
+.flash.warn{border-color:rgba(245,158,11,.5);color:var(--warn)}
+.site{border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;margin-bottom:10px;background:var(--card-2)}
+.site .top{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between}
+.site .title{display:flex;gap:8px;align-items:center;font-weight:600}
+.tag{display:inline-block;padding:1px 8px;border-radius:999px;border:1px solid var(--border);font-size:11.5px;color:var(--muted);margin-left:6px}
+.tag.vision{color:var(--accent);border-color:rgba(34,197,94,.5)}
+.muted{color:var(--muted)}
+.overlay{position:fixed;inset:0;background:rgba(6,11,22,.86);display:flex;align-items:center;justify-content:center;padding:20px;z-index:100}
+.overlay[hidden]{display:none}
+.overlay .card{max-width:520px;width:100%;margin:0}
+.steps{display:flex;gap:6px;margin:6px 0 12px;flex-wrap:wrap}
+.steps span{font-size:12px;color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:2px 10px}
+.steps span.on{color:var(--fg);border-color:var(--accent)}
+.steps span.done{color:var(--accent);border-color:rgba(34,197,94,.5)}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--border);border-top-color:var(--accent);
+  border-radius:50%;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){*{animation:none !important;transition:none !important}}
+@media (max-width:640px){.grid{grid-template-columns:1fr}.grid > div:nth-child(odd){margin-top:8px}header{padding:12px 14px}main{padding:14px 14px 60px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2" aria-hidden="true">
+      <path d="M4 7h16M4 12h16M4 17h10"/></svg>
+    便携版 DeepSeek Harness
+    <span class="sub" id="hdr-sub">加载中…</span>
+  </h1>
+  <div class="row" style="align-items:center">
+    <span class="pill" id="hdr-login"><span class="dot off"></span> 未解锁</span>
+    <button class="btn" id="btn-logout" hidden>退出解锁</button>
+  </div>
+</header>
+
+<nav role="tablist" aria-label="功能分区">
+  <button role="tab" data-tab="overview" aria-selected="true">概览</button>
+  <button role="tab" data-tab="sites" aria-selected="false">站点和模型</button>
+  <button role="tab" data-tab="upgrade" aria-selected="false">升级</button>
+  <button role="tab" data-tab="diag" aria-selected="false">诊断</button>
+  <button role="tab" data-tab="plugins" aria-selected="false">插件</button>
+</nav>
+
+<main>
+  <!-- ============================================ 概览 -->
+  <section id="tab-overview" role="tabpanel">
+    <div class="card">
+      <h2>dsh 状态</h2>
+      <div class="grid" id="ov-dsh"></div>
+      <div class="row" style="margin-top:14px">
+        <button class="btn primary" id="btn-dsh-start">启动 dsh</button>
+        <button class="btn" id="btn-dsh-stop">停止</button>
+        <button class="btn" id="btn-dsh-open" disabled>打开 dsh 界面</button>
+        <span class="sub" id="ov-lock-note"></span>
+      </div>
+      <div class="flash" id="ov-dsh-out"></div>
+    </div>
+
+    <div class="card">
+      <h2>槽位（A/B 双槽）</h2>
+      <div class="grid" id="ov-slots"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn" id="btn-switch">切到另一个槽（秒级回滚）</button>
+      </div>
+      <div class="flash" id="ov-slot-out"></div>
+    </div>
+
+    <div class="card">
+      <h2>环境与占用</h2>
+      <div class="grid" id="ov-env"></div>
+    </div>
+
+    <div class="card">
+      <h2>密钥与站点</h2>
+      <div class="grid" id="ov-key"></div>
+    </div>
+
+    <div class="card">
+      <h2>最近任务</h2>
+      <div id="ov-jobs" class="sub">（无）</div>
+    </div>
+  </section>
+
+  <!-- ============================================ 站点和模型 -->
+  <section id="tab-sites" role="tabpanel" hidden>
+    <div class="card">
+      <h2>站点（可同时启用多个）</h2>
+      <p class="sub">站点表写在 <code>data\sites.json</code>，覆盖层 <code>data\site-patch.yml</code> 由它生成，
+        启动时以 <code>--patch</code> 交给 dsh。站点 ID 不可重复，密钥变量名默认按 <code>站点ID_API_KEY</code> 生成。</p>
+      <div id="site-list" class="sub">加载中…</div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="btn-site-new">新增站点</button>
+        <button class="btn" id="btn-overlay-rebuild">重新生成覆盖层并验收</button>
+      </div>
+      <div class="flash" id="site-out"></div>
+    </div>
+
+    <div class="card" id="site-editor" hidden>
+      <h2 id="site-editor-title">新增站点</h2>
+      <div class="row">
+        <div class="f"><label for="s-id">站点 ID（小写字母/数字/连字符，不可重复）</label><input id="s-id" placeholder="my-relay"></div>
+        <div class="f"><label for="s-name">备注名（只给自己看）</label><input id="s-name" placeholder="朋友的网关"></div>
+      </div>
+      <div class="row">
+        <div class="f"><label for="s-url">接口地址（含 /v1）</label><input id="s-url" placeholder="https://api.example.com/v1"></div>
+        <div class="f"><label for="s-api">协议</label>
+          <select id="s-api">
+            <option value="openai-completions">OpenAI Chat Completions</option>
+            <option value="openai-responses">OpenAI Responses</option>
+            <option value="anthropic-messages">Anthropic Messages</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div class="f"><label for="s-keyenv">密钥变量名（默认按站点 ID 生成）</label><input id="s-keyenv" placeholder="MY_RELAY_API_KEY"></div>
+        <div class="f"><label for="s-key">API 密钥（只走本地请求，进程内加密，不落明文）</label><input id="s-key" type="password" autocomplete="off" placeholder="留空表示不修改"></div>
+      </div>
+      <div class="row" style="margin-top:4px">
+        <div class="f"><label><input type="checkbox" id="s-compat"> 写入兼容修正（网关拒收 role:developer 或只认 max_tokens 时勾选）</label></div>
+        <div class="f"><label><input type="checkbox" id="s-enabled" checked> 启用该站点（不启用则不生成 provider）</label></div>
+      </div>
+      <h3 style="margin-top:14px">模型</h3>
+      <div class="row">
+        <button class="btn" id="btn-probe">从站点拉取模型列表</button>
+        <span class="sub">拉不到也可以手填（每行一个，名字后面加 <code>?image</code> 表示支持图片）</span>
+      </div>
+      <div id="s-probe-out" class="flash"></div>
+      <div id="s-models-box" style="margin-top:8px"></div>
+      <label for="s-models-raw">手工填写（每行一个模型 ID）</label>
+      <textarea id="s-models-raw" placeholder="cn:deepseek-v4.1-flash&#10;某视觉模型?image"></textarea>
+      <div class="row" style="margin-top:14px">
+        <button class="btn primary" id="btn-site-save">保存站点</button>
+        <button class="btn" id="btn-site-cancel">取消</button>
+        <button class="btn danger" id="btn-site-del" hidden>删除该站点</button>
+      </div>
+      <div class="flash" id="site-edit-out"></div>
+    </div>
+
+    <div class="card">
+      <h2>默认模型</h2>
+      <p class="sub">agent 默认用哪个站点的哪个模型（会写进覆盖层的 <code>agent-default-model</code>）。</p>
+      <div class="row">
+        <div class="f"><label for="d-site">站点</label><select id="d-site"></select></div>
+        <div class="f"><label for="d-model">模型</label><select id="d-model"></select></div>
+        <button class="btn primary" id="btn-default-save">设为默认</button>
+      </div>
+      <div class="flash" id="default-out"></div>
+    </div>
+  </section>
+
+  <!-- ============================================ 升级 -->
+  <section id="tab-upgrade" role="tabpanel" hidden>
+    <div class="card">
+      <h2>快速升级</h2>
+      <p class="sub">流程：装到空闲槽 → 启动检查 → 才切换指针。装失败指针不动，旧版本继续可用。</p>
+      <div class="row">
+        <div class="f"><label for="u-ver">目标版本（版本号 / latest / alpha）</label><input id="u-ver" placeholder="0.2.1-alpha.2"></div>
+        <button class="btn primary" id="btn-upgrade">开始升级</button>
+      </div>
+      <div class="flash" id="up-out"></div>
+    </div>
+
+    <div class="card">
+      <h2>单独指定槽位版本</h2>
+      <div class="row">
+        <div class="f"><label for="i-slot">槽位</label>
+          <select id="i-slot"><option value="agent-A">agent-A</option><option value="agent-B">agent-B</option></select>
+        </div>
+        <div class="f"><label for="i-ver">要装的版本</label><input id="i-ver" placeholder="0.2.0-rc.2"></div>
+        <button class="btn" id="btn-install-slot">安装到该槽</button>
+      </div>
+      <div class="flash" id="install-out"></div>
+    </div>
+
+    <div class="card">
+      <h2>任务进度</h2>
+      <div class="grid" id="job-state"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="btn-job-cancel">取消当前任务</button>
+        <button class="btn" id="btn-job-history">刷新任务列表</button>
+      </div>
+      <div class="flash" id="job-out"></div>
+      <h3 style="margin-top:12px">日志（增量刷新）</h3>
+      <pre id="job-log">（还没有任务）</pre>
+    </div>
+  </section>
+
+  <!-- ============================================ 诊断 -->
+  <section id="tab-diag" role="tabpanel" hidden>
+    <div class="card">
+      <h2>自检</h2>
+      <div class="row">
+        <button class="btn primary" id="btn-doctor">运行自检</button>
+        <button class="btn" id="btn-dump">验收站点配置（--dump-config）</button>
+        <button class="btn" id="btn-backup">备份 data\ 与覆盖层</button>
+        <button class="btn" id="btn-refresh">刷新状态</button>
+      </div>
+      <div class="flash" id="diag-out"></div>
+      <div id="doctor-table" style="margin-top:12px" class="sub">（点「运行自检」查看结果）</div>
+      <details style="margin-top:12px"><summary class="sub">原始输出</summary><pre id="doctor-raw">（空）</pre></details>
+      <details style="margin-top:8px"><summary class="sub">验收输出</summary><pre id="dump-raw">（空）</pre></details>
+    </div>
+
+    <div class="card">
+      <h2>网页端口</h2>
+      <div class="row">
+        <div class="f"><label for="p-port">dsh 网页端口（默认 3180，避开机器上自装的 dsh）</label><input id="p-port"></div>
+        <button class="btn" id="btn-port">保存端口</button>
+      </div>
+      <div class="flash" id="port-out"></div>
+    </div>
+
+    <div class="card">
+      <h2>临时目录</h2>
+      <p class="sub">默认放在宿主 <code>%LOCALAPPDATA%\Temp</code>：Windows ACL 沙箱要求在临时目录里写安全描述符，
+        而数据盘根目录通常缺 <code>WRITE_OWNER</code>，放盘上会让 workspace-write 直接失败。</p>
+      <div class="row">
+        <div class="f"><label><input type="checkbox" id="t-usb"> 把临时目录放回本盘（仅当这块盘给足了 WRITE_OWNER）</label></div>
+        <button class="btn" id="btn-temp">保存</button>
+      </div>
+      <div class="flash" id="temp-out"></div>
+    </div>
+
+    <div class="card">
+      <h2>启动器日志</h2>
+      <pre id="launcher-log">（空）</pre>
+    </div>
+  </section>
+
+  <!-- ============================================ 插件 -->
+  <section id="tab-plugins" role="tabpanel" hidden>
+    <div class="card">
+      <h2>插件维护</h2>
+      <p class="sub">dsh 的插件挂在 <b>profile</b>（<code>data\profiles\web</code>）上，不是按 A/B 槽分；两槽共用同一个 profile。
+        这一页会在下一步接通：列出插件条目、停用/启用（写 <code>disabled</code> 覆盖）、安装/卸载第三方插件。</p>
+      <div class="flash on warn">尚未接通 —— 为避免给你一个「看起来能用其实不生效」的界面，这里先留空。</div>
+    </div>
+  </section>
+</main>
+
+<!-- ============================================ 解锁 / 首次设置口令 -->
+<div class="overlay" id="login-ov" hidden>
+  <div class="card">
+    <h2 id="login-title">解锁配置页</h2>
+    <p class="sub" id="login-sub">口令只存在这个服务进程的内存里，退出即忘；它也用来加密站点密钥（所以请记牢，丢了无法找回）。</p>
+    <div id="login-first" hidden>
+      <div class="steps"><span class="on">1 设置口令</span><span>2 站点与模型</span><span>3 密钥</span><span>4 启动</span></div>
+    </div>
+    <label for="li-pass">口令</label>
+    <input id="li-pass" type="password" autocomplete="current-password">
+    <div id="li-pass2-box" hidden>
+      <label for="li-pass2">再输入一次（确认）</label>
+      <input id="li-pass2" type="password" autocomplete="new-password">
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn primary" id="btn-login">解锁</button>
+      <button class="btn" id="btn-migrate" hidden>导入旧密钥文件</button>
+    </div>
+    <div class="flash" id="login-out"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+const TOKEN = new URLSearchParams(location.search).get('token') || (location.hash || '').replace(/^#token=/, '');
+const el = (id) => document.getElementById(id);
+let STATE = null;
+let CURRENT_JOB = null;
+let LOG_OFFSET = 0;
+let POLL = null;
+
+/* ---------------------------------------------------------------- 基础请求 */
+async function api(path, body, method) {
+  const r = await fetch(path, {
+    method: method || (body === undefined ? 'GET' : 'POST'),
+    headers: { 'Content-Type': 'application/json', 'x-config-token': TOKEN },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({ error: '返回不是 JSON' }));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+function flash(id, text, kind) {
+  const f = el(id);
+  f.className = 'flash on' + (kind ? ' ' + kind : '');
+  f.textContent = text;
+}
+function clearFlash(id) { el(id).className = 'flash'; }
+function esc(s) {
+  return String(s === undefined || s === null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function rows(target, pairs) {
+  el(target).innerHTML = pairs.map(([k, v]) => '<div>' + k + '</div><div>' + v + '</div>').join('');
+}
+async function withBusy(btn, label, fn) {
+  const old = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>' + (label || '处理中…');
+  try { return await fn(); } finally { btn.disabled = false; btn.innerHTML = old; }
+}
+
+/* ---------------------------------------------------------------- 标签切换 */
+document.querySelectorAll('nav button[role=tab]').forEach((b) => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('nav button[role=tab]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+    document.querySelectorAll('main section').forEach((s) => { s.hidden = (s.id !== 'tab-' + b.dataset.tab); });
+  });
+});
+function goTab(name) {
+  const b = document.querySelector('nav button[data-tab="' + name + '"]');
+  if (b) b.click();
+}
+
+/* ---------------------------------------------------------------- 状态渲染 */
+function render(s) {
+  STATE = s;
+  el('hdr-sub').textContent = '活动槽 ' + s.slot.active + '（dsh ' + s.slot.activeVersion + '） · 端口 ' + s.webPort;
+  const lg = el('hdr-login');
+  lg.className = 'pill ' + (s.loggedIn ? 'ok' : 'warn');
+  lg.innerHTML = '<span class="dot ' + (s.loggedIn ? 'on' : 'off') + '"></span> ' + (s.loggedIn ? '已解锁' : '未解锁');
+  el('btn-logout').hidden = !s.loggedIn;
+
+  const d = s.dsh || {};
+  rows('ov-dsh', [
+    ['运行状态', d.running ? '<span class="pill ok"><span class="dot on"></span> 运行中</span> pid ' + (d.pid || '?') : '<span class="pill">已停止</span>'],
+    ['网页地址', d.url ? '<a href="' + esc(d.url) + '" target="_blank" rel="noopener">' + esc(d.url.slice(0, 56)) + '…</a>' : '（运行后显示）'],
+    ['端口', String(d.port || s.webPort) + (d.startedAt ? '　启动于 ' + esc(d.startedAt) : '')],
+  ]);
+  el('btn-dsh-open').disabled = !d.url;
+  el('ov-lock-note').textContent = s.loggedIn ? '' : '启动 dsh 需要先解锁（口令用于把密钥注入 dsh 进程）';
+
+  rows('ov-slots', [
+    ['活动槽', s.slot.active + ' · dsh ' + esc(s.slot.activeVersion)],
+    ['空闲槽（回滚目标）', s.slot.idle + ' · dsh ' + esc(s.slot.idleVersion)],
+  ]);
+  rows('ov-env', [
+    ['本盘根目录', '<span class="mono">' + esc(s.root) + '</span>'],
+    ['便携 Node', esc(s.node)],
+    ['代码层 runtime\\', esc(s.sizes.runtime) + '　npm 缓存 ' + esc(s.sizes.cache)],
+    ['数据 data\\', esc(s.sizes.data)],
+    ['磁盘剩余', esc(s.sizes.free)],
+    ['临时目录', esc(s.tempRoot)],
+  ]);
+  const sites = (s.sites && s.sites.list) || [];
+  const keySites = (s.key && s.key.sites) || [];
+  rows('ov-key', [
+    ['密钥库', s.key.configured
+      ? '<span class="pill ok">已配置</span> ' + keySites.length + ' 个站点密钥' +
+        (s.key.store === 'legacy' ? '（旧格式）' : '')
+      : '<span class="pill warn">未配置</span>'],
+    ['站点', sites.length
+      ? sites.map((x) => esc(x.id) + (x.enabled === false ? '（停用）' : '') + (keySites.some((k) => k.siteId === x.id) ? '✔' : '·')).join('、')
+      : '（尚未配置，走 dsh 默认）'],
+    ['默认模型', s.sites && s.sites.default ? esc(s.sites.default.siteId) + ' / ' + esc(s.sites.default.model) : '（未设置）'],
+  ]);
+
+  const jobs = (s.jobs && s.jobs.jobs) || [];
+  el('ov-jobs').innerHTML = jobs.length
+    ? '<table><thead><tr><th>任务</th><th>状态</th><th>说明</th></tr></thead><tbody>' + jobs.slice(0, 5).map((j) =>
+      '<tr><td>' + esc(j.label) + '</td><td>' + statusPill(j.status) + '</td><td class="sub">' + esc(j.message || j.stage || '') + '</td></tr>'
+    ).join('') + '</tbody></table>'
+    : '（无）';
+  if (s.jobs && s.jobs.running) {
+    CURRENT_JOB = s.jobs.running.id;
+    renderJob(s.jobs.running);
+  }
+  el('p-port').value = s.webPort;
+  if (s.loggedIn) el('login-ov').hidden = true;
+}
+
+function statusPill(st) {
+  const map = { done: ['ok', '完成'], running: ['', '进行中'], queued: ['', '排队'], failed: ['bad', '失败'],
+    cancelled: ['warn', '已取消'], interrupted: ['warn', '中断'] };
+  const m = map[st] || ['', st];
+  return '<span class="pill ' + m[0] + '">' + m[1] + '</span>';
+}
+
+function renderJob(j) {
+  if (!j) { rows('job-state', [['当前任务', '（无）']]); return; }
+  rows('job-state', [
+    ['任务', esc(j.label)],
+    ['状态', statusPill(j.status) + ' ' + esc(j.message || '')],
+    ['阶段', esc(j.stage || '—')],
+    ['开始 / 结束', esc(j.startedAt || '—') + (j.endedAt ? ' → ' + esc(j.endedAt) : '')],
+    ['退出码', j.exitCode === null || j.exitCode === undefined ? '—' : String(j.exitCode)],
+    ['回滚', j.rollback ? esc(j.rollback.reason) : '—'],
+  ]);
+}
+
+async function refresh() {
+  try {
+    render(await api('/api/state'));
+    return STATE;
+  } catch (e) {
+    flash('ov-dsh-out', '读取状态失败：' + e.message, 'err');
+    return null;
+  }
+}
+
+/* ---------------------------------------------------------------- 解锁 */
+async function doLogin(setup) {
+  const pass = el('li-pass').value;
+  if (!pass) { flash('login-out', '请输入口令。', 'err'); return; }
+  if (setup && pass !== el('li-pass2').value) { flash('login-out', '两次输入不一致。', 'err'); return; }
+  try {
+    const r = await withBusy(el('btn-login'), '解锁中…', () => api('/api/login', setup ? { pass, setup: true } : { pass }));
+    if (r.firstRun && !r.created) {
+      // 还没有设置过口令：引导确认
+      el('login-title').textContent = '第一次使用：设置口令';
+      el('li-pass2-box').hidden = false;
+      el('btn-migrate').hidden = true;
+      flash('login-out', r.message || '请再输一遍口令完成设置。', 'warn');
+      el('btn-login').textContent = '设置口令并解锁';
+      el('btn-login').dataset.setup = '1';
+      return;
+    }
+    el('login-ov').hidden = true;
+    el('li-pass').value = ''; el('li-pass2').value = '';
+    flash('ov-dsh-out', '已解锁：现在可以设置密钥、启动 dsh、跑安装任务。', 'ok');
+    await refresh();
+    if (r.firstRun) { goTab('sites'); }
+  } catch (e) {
+    flash('login-out', e.message, 'err');
+  }
+}
+el('btn-login').addEventListener('click', () => doLogin(el('btn-login').dataset.setup === '1'));
+el('li-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') el('btn-login').click(); });
+el('li-pass2').addEventListener('keydown', (e) => { if (e.key === 'Enter') el('btn-login').click(); });
+el('btn-logout').addEventListener('click', async () => {
+  await api('/api/logout', {});
+  el('login-ov').hidden = false;
+  el('login-title').textContent = '解锁配置页';
+  el('li-pass2-box').hidden = true;
+  el('btn-login').textContent = '解锁';
+  delete el('btn-login').dataset.setup;
+  await refresh();
+});
+el('btn-migrate').addEventListener('click', async (e) => {
+  const pass = el('li-pass').value;
+  if (!pass) { flash('login-out', '先输入旧密钥文件的口令。', 'err'); return; }
+  try {
+    const r = await api('/api/keys/migrate', { pass });
+    flash('login-out', '已导入站点 ' + r.siteId + '（变量名 ' + r.keyName + '，' + r.length + ' 字符）。', 'ok');
+    await refresh();
+  } catch (err) { flash('login-out', '导入失败：' + err.message, 'err'); }
+});
+
+/* ---------------------------------------------------------------- dsh 启停 */
+el('btn-dsh-start').addEventListener('click', (e) => withBusy(e.currentTarget, '启动中…', async () => {
+  clearFlash('ov-dsh-out');
+  flash('ov-dsh-out', '正在启动 dsh（首次启动会建会话目录，可能十几秒）…');
+  try {
+    const r = await api('/api/dsh/start', {});
+    flash('ov-dsh-out', '已启动。\n' + (r.text || ''), r.ok ? 'ok' : 'err');
+  } catch (err) { flash('ov-dsh-out', '启动失败：' + err.message, 'err'); }
+  await refresh();
+}));
+el('btn-dsh-stop').addEventListener('click', (e) => withBusy(e.currentTarget, '停止中…', async () => {
+  try {
+    const r = await api('/api/dsh/stop', {});
+    flash('ov-dsh-out', r.ok ? '已停止，端口已释放。' : '停止了但端口仍被占用，请稍后再看。', r.ok ? 'ok' : 'warn');
+  } catch (err) { flash('ov-dsh-out', '停止失败：' + err.message, 'err'); }
+  await refresh();
+}));
+el('btn-dsh-open').addEventListener('click', () => {
+  const d = (STATE && STATE.dsh) || {};
+  if (d.url) window.open(d.url, '_blank', 'noopener');
+});
+el('btn-switch').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/slot/switch', {});
+    flash('ov-slot-out', r.text || '已切换。', r.ok ? 'ok' : 'err');
+  } catch (e) { flash('ov-slot-out', '切换失败：' + e.message, 'err'); }
+  await refresh();
+});
+
+/* ---------------------------------------------------------------- 站点 */
+let SITES = [];
+let EDITING = null;
+async function loadSites() {
+  const r = await api('/api/sites');
+  SITES = r.sites || [];
+  const box = el('site-list');
+  if (!SITES.length) { box.innerHTML = '（还没有站点）'; }
+  else {
+    box.innerHTML = SITES.map((s) => {
+      const models = (s.models || []).map((m) => '<span class="tag' + (m.image ? ' vision' : '') + '">' + esc(m.id) + (m.image ? ' · 含图' : '') + '</span>').join('');
+      return '<div class="site"><div class="top"><div class="title">' + esc(s.id) +
+        (s.name ? '<span class="sub">（' + esc(s.name) + '）</span>' : '') +
+        (s.enabled === false ? '<span class="pill warn">已停用</span>' : '<span class="pill ok">启用中</span>') +
+        '</div><div class="row"><button class="btn" data-edit="' + esc(s.id) + '">编辑</button></div></div>' +
+        '<div class="sub mono" style="margin-top:6px">' + esc(s.baseURL) + '　' + esc(s.api) + '　变量名 ' + esc(s.keyEnv) + '</div>' +
+        '<div style="margin-top:6px">' + models + '</div></div>';
+    }).join('');
+    box.querySelectorAll('button[data-edit]').forEach((b) => b.addEventListener('click', () => openEditor(b.dataset.edit)));
+  }
+  // 默认模型下拉
+  const ds = el('d-site'), dm = el('d-model');
+  ds.innerHTML = SITES.map((s) => '<option value="' + esc(s.id) + '"' + (s.enabled === false ? ' disabled' : '') + '>' + esc(s.id) + (s.enabled === false ? '（停用）' : '') + '</option>').join('');
+  const cur = (r.default && r.default.siteId) || (SITES[0] && SITES[0].id);
+  if (cur) ds.value = cur;
+  fillModels();
+  return r;
+}
+function fillModels() {
+  const s = SITES.find((x) => x.id === el('d-site').value);
+  el('d-model').innerHTML = s ? (s.models || []).map((m) => '<option value="' + esc(m.id) + '">' + esc(m.id) + '</option>').join('') : '';
+  if (STATE && STATE.sites && STATE.sites.default && STATE.sites.default.siteId === el('d-site').value) {
+    el('d-model').value = STATE.sites.default.model;
+  }
+}
+el('d-site').addEventListener('change', fillModels);
+
+function openEditor(id) {
+  EDITING = id || null;
+  const s = id ? SITES.find((x) => x.id === id) : null;
+  el('site-editor').hidden = false;
+  el('site-editor-title').textContent = s ? ('编辑站点 ' + s.id) : '新增站点';
+  el('s-id').value = s ? s.id : '';
+  el('s-id').disabled = !!s;
+  el('s-name').value = s ? (s.name || '') : '';
+  el('s-url').value = s ? s.baseURL : '';
+  el('s-api').value = s ? s.api : 'openai-completions';
+  el('s-keyenv').value = s ? s.keyEnv : '';
+  el('s-key').value = '';
+  el('s-compat').checked = !!(s && s.compat);
+  el('s-enabled').checked = !s || s.enabled !== false;
+  el('s-models-raw').value = s ? (s.models || []).map((m) => m.id + (m.image ? '?image' : '')).join('\n') : '';
+  el('s-models-box').innerHTML = '';
+  el('btn-site-del').hidden = !s;
+  clearFlash('site-edit-out'); clearFlash('s-probe-out');
+  el('s-id').focus();
+}
+el('btn-site-new').addEventListener('click', () => openEditor(null));
+el('btn-site-cancel').addEventListener('click', () => { el('site-editor').hidden = true; });
+el('s-id').addEventListener('input', () => {
+  if (!EDITING) {
+    const id = el('s-id').value.trim();
+    el('s-keyenv').value = id ? (id.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').replace(/^([0-9])/, '_$1') + '_API_KEY') : '';
+  }
+});
+el('btn-probe').addEventListener('click', (e) => withBusy(e.currentTarget, '拉取中…', async () => {
+  clearFlash('s-probe-out');
+  try {
+    const r = await api('/api/sites/probe', {
+      baseURL: el('s-url').value.trim(), api: el('s-api').value,
+      key: el('s-key').value || undefined, siteId: EDITING || undefined,
+    });
+    if (!r.ok) { flash('s-probe-out', '拉取失败：' + (r.error || ''), 'err'); return; }
+    const existing = el('s-models-raw').value.split('\n').map((x) => x.trim()).filter(Boolean);
+    el('s-models-box').innerHTML = '<div class="sub" style="margin-bottom:6px">拉到 ' + r.models.length + ' 个模型，勾选要使用的：</div>' +
+      r.models.map((m) => {
+        const on = existing.some((x) => x.split('?')[0] === m) || !existing.length;
+        return '<label style="display:block;margin:4px 0"><input type="checkbox" data-model="' + esc(m) + '"' + (on ? ' checked' : '') + '> ' + esc(m) +
+          ' <span class="sub">视觉</span> <input type="checkbox" data-vision="' + esc(m) + '"></label>';
+      }).join('') + '<div class="row" style="margin-top:8px"><button class="btn" id="btn-apply-models">用勾选的模型填充下面清单</button></div>';
+    el('btn-apply-models').addEventListener('click', () => {
+      const picked = [];
+      el('s-models-box').querySelectorAll('input[data-model]').forEach((cb) => {
+        if (cb.checked) {
+          const vis = el('s-models-box').querySelector('input[data-vision="' + CSS.escape(cb.dataset.model) + '"]');
+          picked.push(cb.dataset.model + (vis && vis.checked ? '?image' : ''));
+        }
+      });
+      el('s-models-raw').value = picked.join('\n');
+    });
+    flash('s-probe-out', '拉取成功（HTTP ' + r.status + '）。', 'ok');
+  } catch (err) { flash('s-probe-out', '拉取失败：' + err.message, 'err'); }
+}));
+el('btn-site-save').addEventListener('click', (e) => withBusy(e.currentTarget, '保存中…', async () => {
+  clearFlash('site-edit-out');
+  const models = el('s-models-raw').value.split('\n').map((x) => x.trim()).filter(Boolean).map((x) => {
+    const [id, flag] = x.split('?');
+    return { id: id.trim(), image: (flag || '').trim() === 'image' };
+  });
+  const site = {
+    id: el('s-id').value.trim(), name: el('s-name').value.trim(), baseURL: el('s-url').value.trim(),
+    api: el('s-api').value, keyEnv: el('s-keyenv').value.trim() || undefined,
+    models, compat: el('s-compat').checked ? true : null, enabled: el('s-enabled').checked,
+  };
+  try {
+    const r = await api('/api/sites', { site });
+    let msg = '站点已保存，覆盖层' + (r.backup ? '（旧文件已备份）' : '') + '。';
+    const key = el('s-key').value;
+    if (key) {
+      const kr = await api('/api/key', { siteId: site.id, key, keyEnv: site.keyEnv });
+      msg += '\n密钥已加密保存（变量名 ' + kr.keyName + '，' + kr.length + ' 字符）。';
+    }
+    flash('site-edit-out', msg, 'ok');
+    el('site-editor').hidden = true;
+    await loadSites();
+    await refresh();
+  } catch (err) { flash('site-edit-out', '保存失败：' + err.message, 'err'); }
+}));
+el('btn-site-del').addEventListener('click', async () => {
+  if (!EDITING) return;
+  if (!window.confirm('删除站点 ' + EDITING + '？（会同时从覆盖层移除；密钥可选择一起删）')) return;
+  const alsoKey = window.confirm('连它保存的密钥一起删除吗？（确定=一起删，取消=保留密钥）');
+  try {
+    const r = await api('/api/sites/delete', { siteId: EDITING, removeKey: alsoKey });
+    flash('site-out', '已删除站点 ' + EDITING + (r.keyRemoved ? '（含密钥）' : ''), 'ok');
+    el('site-editor').hidden = true;
+    await loadSites(); await refresh();
+  } catch (e) { flash('site-edit-out', '删除失败：' + e.message, 'err'); }
+});
+el('btn-default-save').addEventListener('click', async () => {
+  const siteId = el('d-site').value, model = el('d-model').value;
+  if (!siteId || !model) { flash('default-out', '请选择站点与模型。', 'err'); return; }
+  try {
+    await api('/api/sites', { site: SITES.find((s) => s.id === siteId), default: { siteId, model } });
+    flash('default-out', '默认模型已设为 ' + siteId + ' / ' + model + '。', 'ok');
+    await refresh();
+  } catch (e) { flash('default-out', '设置失败：' + e.message, 'err'); }
+});
+el('btn-overlay-rebuild').addEventListener('click', (e) => withBusy(e.currentTarget, '生成中…', async () => {
+  try {
+    const r = await api('/api/overlay/rebuild', {});
+    flash('site-out', '覆盖层已重写：' + r.overlay + (r.backup ? '（旧文件备份到 ' + r.backup + '）' : '（内容没变，未重写）') + '\n' + (r.dump || '').split('\n')[0], 'ok');
+  } catch (e2) { flash('site-out', '生成失败：' + e2.message, 'err'); }
+}));
+
+/* ---------------------------------------------------------------- 升级与任务 */
+function startPolling() {
+  if (POLL) return;
+  POLL = setInterval(pollJob, 1200);
+}
+function stopPolling() { if (POLL) { clearInterval(POLL); POLL = null; } }
+async function pollJob() {
+  try {
+    const s = await api('/api/jobs');
+    const run = s.running;
+    if (run) {
+      if (!CURRENT_JOB || CURRENT_JOB !== run.id) { CURRENT_JOB = run.id; LOG_OFFSET = 0; el('job-log').textContent = ''; }
+      renderJob(run);
+    } else if (CURRENT_JOB) {
+      const mine = (s.jobs || []).find((j) => j.id === CURRENT_JOB);
+      if (mine) renderJob(mine);
+      stopPolling();
+      flash('job-out', '任务结束：' + (mine ? (mine.status + '　' + (mine.message || '')) : '—'), mine && mine.status === 'done' ? 'ok' : 'warn');
+      await refresh();
+      return;
+    }
+    if (CURRENT_JOB) await pullLog();
+  } catch (e) { /* 轮询失败不打扰用户 */ }
+}
+async function pullLog() {
+  if (!CURRENT_JOB) return;
+  const r = await api('/api/jobs/log?id=' + encodeURIComponent(CURRENT_JOB) + '&from=' + LOG_OFFSET, undefined, 'GET');
+  if (r && r.text) {
+    if (r.reset) { el('job-log').textContent = ''; }
+    const pre = el('job-log');
+    pre.textContent = (pre.textContent === '（还没有任务）' ? '' : pre.textContent) + r.text;
+    pre.scrollTop = pre.scrollHeight;
+    LOG_OFFSET = r.next;
+  }
+}
+async function runJob(path, body, btn, label) {
+  clearFlash('job-out');
+  try {
+    const r = await withBusy(btn, label, () => api(path, body));
+    CURRENT_JOB = r.job && r.job.id;
+    LOG_OFFSET = 0;
+    el('job-log').textContent = '';
+    renderJob(r.job);
+    flash('job-out', '任务已开始：' + r.job.label + '（可切到别的标签页，任务在后台继续）', 'ok');
+    goTab('upgrade');
+    startPolling();
+    await pullLog();
+  } catch (e) {
+    flash('job-out', '无法开始任务：' + e.message, 'err');
+  }
+}
+el('btn-upgrade').addEventListener('click', (e) => {
+  const v = el('u-ver').value.trim();
+  if (!v) { flash('up-out', '请填目标版本。', 'err'); return; }
+  runJob('/api/jobs/upgrade', { version: v }, e.currentTarget, '升级中…');
+});
+el('btn-install-slot').addEventListener('click', (e) => {
+  const version = el('i-ver').value.trim();
+  if (!version) { flash('install-out', '请填写要装的版本。', 'err'); return; }
+  runJob('/api/jobs/install', { slot: el('i-slot').value, version }, e.currentTarget, '安装中…');
+});
+el('btn-job-cancel').addEventListener('click', async () => {
+  if (!CURRENT_JOB) { flash('job-out', '当前没有任务。', 'warn'); return; }
+  try {
+    await api('/api/jobs/cancel', { id: CURRENT_JOB });
+    flash('job-out', '已发送取消。', 'warn');
+  } catch (e) { flash('job-out', '取消失败：' + e.message, 'err'); }
+});
+el('btn-job-history').addEventListener('click', async () => {
+  const s = await api('/api/jobs');
+  el('job-out').className = 'flash on';
+  el('job-out').innerHTML = (s.jobs || []).map((j) => esc(j.id) + '　' + esc(j.status) + '　' + esc(j.label) + '　<span class="sub">' + esc(j.message || '') + '</span>').join('<br>') || '（无）';
+});
+
+/* ---------------------------------------------------------------- 诊断 */
+el('btn-doctor').addEventListener('click', (e) => withBusy(e.currentTarget, '自检中…', async () => {
+  try {
+    const r = await api('/api/doctor', {});
+    el('doctor-raw').textContent = r.text;
+    el('doctor-table').innerHTML = renderDoctor(r.text);
+    const bad = (r.text.match(/FAIL/g) || []).length;
+    flash('diag-out', bad ? ('自检完成：有 ' + bad + ' 项失败，见下表。') : '自检完成：没有失败项。', bad ? 'warn' : 'ok');
+    await refresh();
+  } catch (e2) { flash('diag-out', '自检失败：' + e2.message, 'err'); }
+}));
+function renderDoctor(text) {
+  const lines = String(text).split(/\r?\n/);
+  const rowsOut = [];
+  for (const line of lines) {
+    const m = /^\s*(OK|WARN|FAIL)\s+(.*?)\s*:\s*(.*)$/.exec(line);
+    if (!m) continue;
+    const kind = m[1] === 'OK' ? 'ok' : (m[1] === 'WARN' ? 'warn' : 'bad');
+    const label = m[2].trim(), detail = m[3].trim();
+    rowsOut.push('<tr><td>' + esc(label) + '</td><td><span class="pill ' + kind + '">' + m[1] + '</span></td><td class="sub">' + esc(detail) + '</td></tr>');
+  }
+  if (!rowsOut.length) return '<div class="sub">（没能解析成表格，请看下面的原始输出）</div>';
+  return '<table><thead><tr><th>项目</th><th>结果</th><th>说明</th></tr></thead><tbody>' + rowsOut.join('') + '</tbody></table>';
+}
+el('btn-dump').addEventListener('click', (e) => withBusy(e.currentTarget, '验收中…', async () => {
+  try {
+    const r = await api('/api/dump', {});
+    el('dump-raw').textContent = r.text;
+    flash('diag-out', /组合成功/.test(r.text) ? '验收通过：' + r.text.split('\n')[0] : '验收有问题，见下方原始输出。', /组合成功/.test(r.text) ? 'ok' : 'warn');
+  } catch (e2) { flash('diag-out', '验收失败：' + e2.message, 'err'); }
+}));
+el('btn-backup').addEventListener('click', (e) => withBusy(e.currentTarget, '备份中…', async () => {
+  try { const r = await api('/api/backup', {}); flash('diag-out', r.text, 'ok'); }
+  catch (e2) { flash('diag-out', '备份失败：' + e2.message, 'err'); }
+}));
+el('btn-refresh').addEventListener('click', refresh);
+el('btn-port').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/port', { port: parseInt(el('p-port').value, 10) });
+    flash('port-out', '已保存端口 ' + r.state.webPort + '（下次启动 dsh 生效）。', 'ok');
+    await refresh();
+  } catch (e) { flash('port-out', '保存失败：' + e.message, 'err'); }
+});
+el('btn-temp').addEventListener('click', async () => {
+  try {
+    await api('/api/portable-temp', { usbTemp: el('t-usb').checked });
+    flash('temp-out', '已保存。' + (el('t-usb').checked ? '（盘上临时目录可能让 workspace-write 失败，请确认这块盘给足 WRITE_OWNER）' : ''), 'ok');
+    await refresh();
+  } catch (e) { flash('temp-out', '保存失败：' + e.message, 'err'); }
+});
+
+/* ---------------------------------------------------------------- 启动 */
+(async function boot() {
+  const s = await refresh();
+  if (!s) return;
+  el('launcher-log').textContent = s.launcherLog || '（空）';
+  el('t-usb').checked = /usb-temp/.test(s.tempRoot || '') || /U 盘/.test(s.tempRoot || '');
+  if (!s.loggedIn) {
+    const firstRun = !s.key || !s.key.store;
+    el('login-ov').hidden = false;
+    el('login-title').textContent = firstRun ? '第一次使用：设置口令' : '解锁配置页';
+    el('login-first').hidden = !firstRun;
+    el('li-pass2-box').hidden = !firstRun;
+    el('btn-login').dataset.setup = firstRun ? '1' : '';
+    el('btn-login').textContent = firstRun ? '设置口令并解锁' : '解锁';
+    el('btn-migrate').hidden = firstRun;
+    el('li-pass').focus();
+  } else {
+    el('login-ov').hidden = true;
+  }
+  await loadSites().catch(() => {});
+  startPolling();
+})();
+</script>
+</body>
+</html>

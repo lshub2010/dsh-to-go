@@ -16,21 +16,30 @@
 | 密钥明文放在 YAML 里 | 口令派生密钥 + AES-256-GCM 加密，只在启动时解密进内存 |
 | 升级出问题回不去 | **A/B 双槽**：装到空闲槽 → 自检通过 → 才切指针；回滚改一行 |
 | 用中转/自建网关要手改上游配置 | 站点配置是**独立覆盖层**，由 `--patch` 加载，不碰上游文件 |
-| 命令行配置又长又乱 | 浏览器里的**图形配置页**（站点/密钥/槽位/升级/自检） |
+| 命令行配置又长又乱 | 浏览器里的**图形向导**：首次设置口令 → 站点与密钥 → 选版本安装 → 启动，之后五个分区管到底 |
 
 ## 快速开始
 
 ```bat
 git clone https://github.com/wanzhang-xr/dsh-to-go.git
 cd dsh-to-go
-build.cmd        :: 下载并校验便携 Node，装 dsh 到两个槽（约 10 分钟 / 1.4 GB）
+build.cmd        :: 下载并校验便携 Node，然后自动打开图形向导
 ```
 
-构建完成后：
+浏览器打开后是一个本地页面（`127.0.0.1`），按向导走完就行：
+
+1. **设置口令** —— 只存在服务进程内存里，同时用它加密站点密钥
+2. **添加站点与密钥** —— 站点地址、协议、模型（可从站点拉取列表），密钥写进盘上密文
+3. **选择版本安装** —— 后台装进空闲槽，进度与日志实时显示（第一次约 5～12 分钟）
+4. **启动 dsh** —— 页面上直接起停，并给一个打开 dsh 界面的按钮
+
+想跳过向导、一路装到底：`build.cmd -Cli`（命令行把两个槽都装好）。
+
+之后日常只用两个入口：
 
 ```bat
-dsh-config.cmd   :: 维护台：5) key 存密钥、7) site 配站点   ← 或直接用 dsh-ui.cmd 图形配置
-dsh.cmd          :: 日常入口：启动 Web UI 并打开浏览器
+dsh-ui.cmd       :: 图形入口（向导 + 概览 / 站点和模型 / 升级 / 诊断 / 插件）
+dsh.cmd          :: 直接起 dsh 的 Web UI（已配好时最快）
 ```
 
 **要求**：Windows 10/11 x64；2 GB 空闲空间；构建时需要联网。**运行时不要求宿主装 Node。**
@@ -45,7 +54,7 @@ dsh-to-go\
 ├─ dsh.cmd                  日常入口：起 Web UI（默认 3180）并开浏览器
 ├─ dsh-cli.cmd              命令行入口：dsh --version / headless "任务" …
 ├─ dsh-config.cmd           维护台（终端菜单）
-├─ dsh-ui.cmd               图形配置页（浏览器）
+├─ dsh-ui.cmd               图形页（浏览器）
 ├─ dsh-doctor.cmd           一键自检
 ├─ runtime\                 构建产物（不进 git）
 │   ├─ node\                便携 Node
@@ -57,43 +66,55 @@ dsh-to-go\
 ├─ secrets\                 AES 加密的密钥文件（不进 git）
 ├─ backups\                 槽位备份 zip（不进 git）
 ├─ tools\                   启动器 / 密钥 / 站点 / 维护台 / 构建器
-└─ ui\config.html           图形配置页（单文件，无外链）
+└─ ui\app.html           图形页（单文件，无外链）
 ```
 
-## 五个入口
+## 入口
+
+图形向导（`dsh-ui.cmd`）是主入口，命令行工具保留作备用：
 
 | 入口 | 用途 |
 |---|---|
-| `dsh.cmd` | 起 Web UI：解锁密钥 → 选活动槽 → 校验站点覆盖层 → 起服务并开浏览器 |
+| `dsh-ui.cmd` | **图形入口**：首次向导 + 概览 / 站点和模型 / 升级 / 诊断 / 插件（插件页在做） |
+| `dsh.cmd` | 起 dsh 自己的 Web UI：解锁密钥 → 选活动槽 → 校验站点覆盖层 → 起服务并开浏览器 |
 | `dsh-cli.cmd` | 不打开界面的用法：`dsh-cli.cmd --version`、`dsh-cli.cmd headless "改个 bug"` |
-| `dsh-config.cmd` | 终端维护台：自检 / 升级 / 切槽 / 备份 / 密钥 / 站点配置 / 图形页 |
-| `dsh-ui.cmd` | 图形配置页：概览、站点与模型、密钥、槽位与升级、诊断 |
+| `dsh-config.cmd` | 终端维护台：自检 / 升级 / 切槽 / 备份 / 密钥 / 站点配置 / 打开图形页 |
 | `dsh-doctor.cmd` | 一键体检：Node、槽位、端口、密钥、站点、残留进程、宿主污染 |
 
 ## 密钥是怎么保住的
 
 选的是「**盘上放密文，口令不落盘**」的方案：
 
-1. `dsh-config.cmd → 5) key`：输入两遍口令（不回显、不落盘）＋粘贴 API key（隐藏输入）
-2. 用 `scrypt` 从口令派生密钥，`aes-256-gcm` 加密后写入 `secrets\model-key.enc`
+1. 首次在图形向导里设置口令（命令行则是 `dsh-config.cmd → 5) key`）：口令不回显、不落盘，只存在服务进程内存里
+2. 用 `scrypt` 从口令派生密钥，`aes-256-gcm` 加密后写入 `secrets\keys.enc`——这是**多站点密钥库**，每个站点一条记录
 3. 启动时解密，**只注入当前进程环境变量**（`launch.js` 内 `set`，绝不用 `setx`），不写回 `data\`、不进命令行参数、不进日志
-4. 变量名以 `secrets\key-name.txt` 为准——换网关只要改这个名字，**密钥不用重新输入**
+4. 每个站点的密钥对应自己的变量名（默认 `<站点ID>_API_KEY`，可在页面里改）——在官方源和中转之间切换只改站点地址，**密钥不用重新输入**
+5. 删站点时可以只删站点、保留密钥；删**整个**密钥库必须显式确认再验一次口令（防误删）
+6. 密钥库文件若损坏（截断/被改坏），写入会被**拒绝**而不是用空库覆盖——不留"密钥全没了"的静默故障
 
-**换机器/换人用**：口令不对就是解不开，`dsh-config.cmd → 5` 重设即可（会覆盖旧密文）。**盘丢了**：密文 + 口令双重门槛，比明文 YAML 强得多；但请自行判断口令强度。
+**换机器/换人用**：口令不对就是解不开，在页面或 `dsh-config.cmd → 5` 重设即可。**盘丢了**：密文 + 口令双重门槛，比明文 YAML 强得多；但请自行判断口令强度。
 
 ## 站点配置（官方 / 中转 / 自建）
 
 dsh 自己的凭据分层是「启动环境 > `.credentials.yaml` > 项目 `.env` > 家目录 `.env`」。本工具走**最高优先级那层**，并额外解决「非官方网关」的问题：
 
 - 站点 ID、接口地址、协议（`openai-completions` / `openai-responses` / `anthropic-messages`）、模型清单、兼容开关（如拒收 `role: developer`、只认 `max_tokens`）
-- 写进 `data\site-patch.yml`，启动时作为 `dsh --patch <file>` 传入——**上游文件 `data\profiles\web\cordis.patch.yml` 完全归 dsh 与它的 Web UI 所有**，本工具不往里写
+- 站点表 `data\sites.json` 是**唯一事实来源**（页面/命令行都写它），`data\site-patch.yml` 是由它生成的覆盖层
+- 启动时把覆盖层作为 `dsh --patch <file>` 传入——**上游文件 `data\profiles\web\cordis.patch.yml` 完全归 dsh 与它的 Web UI 所有**，本工具不往里写
 - 配完可以点「验收」：跑 `--dump-config` 组合一遍，确认站点 provider 真的进了配置树
 
-## 图形配置页
+## 图形向导与主页面
 
-`dsh-ui.cmd` 在 `127.0.0.1` 上起一个本地页面：概览 / 站点与模型 / 密钥 / 槽位与升级 / 诊断五页。
+`dsh-ui.cmd` 在 `127.0.0.1` 上起一个本地页面（单文件、零外链，离线可用）：
 
-安全姿态（浏览器是共享进程，所以按服务来防）：只绑回环；每次启动生成随机令牌，页面必须带 `?token=` 打开、API 必须带 `x-config-token` 头；带外部 `Origin` 的请求直接 403；不发 CORS 头；密钥只在本地请求体里传，进程内加密，不回显、不落日志。
+- **首次使用**：设置口令 → 添加站点与密钥 → 选版本安装（后台任务，日志实时刷新）→ 启动 dsh
+- **概览**：dsh 启停与打开、状态统计、槽位与回滚、环境占用、密钥与站点摘要、最近任务
+- **站点和模型**：多站点可同时启用，每站点独立密钥；模型可从站点拉取后勾选，并可逐个标记是否支持图片
+- **升级**：快速升级（装空闲槽 → 自检 → 切指针）或单独指定 A/B 槽版本；进度与日志实时刷新
+- **诊断**：自检（解析成表格）、站点配置验收（`--dump-config`）、备份、网页端口、临时目录、启动器日志
+- **插件**：按 profile 列条目 + 停用/启用 + 安装/卸载（这一页仍在做，页面上如实标注）
+
+安全姿态（浏览器是共享进程，所以按服务来防）：只绑回环；每次启动生成随机令牌，页面必须带 `?token=` 打开、API 必须带 `x-config-token` 头；带外部 `Origin` 的请求直接 403；不发 CORS 头；口令只留在服务进程内存、页面不保存；密钥只在本地请求体里传，进程内加密，不回显、不落日志；所有写操作（密钥 / 任务 / 启停 / 备份）都要求已解锁。
 
 ## 已知坑（替你踩过了）
 
@@ -103,13 +124,13 @@ dsh 自己的凭据分层是「启动环境 > `.credentials.yaml` > 项目 `.env
 | `error: --profile <name> is required` | dsh 的参数解析不接受「启动器标记 + 裸命令名」的顺序（`--patch f web` 会被拒）。启动器现在把标记插在 profile/命令之后（`--profile web --patch f …`、`web --patch f …` 均可）。 |
 | 中文提示在命令行里变乱码/截断 | `cmd.exe` 用系统 ANSI（中文机器是 GBK）解析 `.bat`，UTF-8 中文会破坏行与括号配对。所以所有 `.cmd` 保持**纯 ASCII**，中文提示放在 `tools\msg\*.txt`（UTF-8）里由 `tools\say.cmd` 打印。 |
 | 宿主上也装了 dsh，两边互相打架 | 共享的是端口（宿主默认 3080，本盘用 3180）、浏览器 cookie（类型按 host+port 哈希，所以分端口即分登录）与 PATH/模块解析。启动器对 `DSH_HOME`/`DSH_AGENTS_HOME`/`npm_config_cache` 等**无条件覆盖**，并且从不碰宿主的 `C:\Users\<你>\.agents`。 |
-| 端口被占就直接起不来 | 实测 dsh 端口冲突时**不会自动换端口**，直接 `EADDRINUSE` 退出。改端口：`dsh-config.cmd → 4` 或图形页「槽位与升级」。 |
+| 端口被占就直接起不来 | 实测 dsh 端口冲突时**不会自动换端口**，直接 `EADDRINUSE` 退出。改端口：图形页「诊断」里改，或 `dsh-config.cmd → 4`。 |
 | 升级后想退回去 | 改 `runtime\current.txt` 一行（或维护台 `3) switch`）。两个槽各自独立，随时互切。 |
 
 ## 自己构建时都发生了什么
 
-1. `build.cmd` → `tools\build.ps1`：下载官方 Node win-x64 zip（**校验 SHA-256**，失败则中止）、解压成 `runtime\node`
-2. → `tools\install.js`：为每个槽写 `package.json` 并在槽目录里 `npm install --cache=runtime\npm-cache`，官方源失败自动换 npmmirror；然后写 `current.txt`/`port.txt`/`VERSION.txt`
+1. `build.cmd` → `tools\build.ps1`：下载官方 Node win-x64 zip（**校验 SHA-256**，失败则中止）、解压成 `runtime\node`，然后**打开图形向导**（`-Cli` 才在命令行把两个槽一次装好）
+2. 向导里的「选择版本安装」→ `tools\jobs.js` 起后台任务 → `tools\install.js`：为槽写 `package.json` 并在槽目录里 `npm install --cache=runtime\npm-cache`，官方源失败自动换 npmmirror；然后写 `current.txt`/`port.txt`/`VERSION.txt`
 3. 之后所有启动都走 `tools\launch.js`：解锁密钥 → 组装环境 → 注入站点覆盖层 → 起 dsh
 
 更细的设计取舍与验证记录见 [`docs/DESIGN.md`](docs/DESIGN.md)，日常使用说明见 [`docs/USAGE.md`](docs/USAGE.md)。

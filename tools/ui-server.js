@@ -2,7 +2,7 @@
 /**
  * Local configuration server for the portable DeepSeek Harness.
  *
- * Serves ui/config.html and a small JSON API so the whole bundle can be
+ * Serves ui/app.html and a small JSON API so the whole bundle can be
  * configured from a browser instead of the console menu.
  *
  * Security posture (the page is local, but a browser is a shared process):
@@ -31,7 +31,7 @@ const ROOT = path.resolve(__dirname, '..');
 const RUNTIME = path.join(ROOT, 'runtime');
 const DATA = path.join(ROOT, 'data');
 const NODE_EXE = path.join(RUNTIME, 'node', 'node.exe');
-const PAGE = path.join(ROOT, 'ui', 'config.html');
+const PAGE = path.join(ROOT, 'ui', 'app.html');
 const PORT_FILE = path.join(RUNTIME, 'port.txt');
 const SLOT_FILE = path.join(RUNTIME, 'current.txt');
 const VERSION_FILE = path.join(ROOT, 'VERSION.txt');
@@ -282,35 +282,21 @@ async function handleApi(req, res, url) {
     if (p === '/api/state') return send(200, state());
 
     if (p === '/api/site' && req.method === 'POST') {
-      const s = {
-        id: String(body.id || '').trim(),
-        baseURL: String(body.baseURL || '').trim(),
-        api: String(body.api || 'openai-completions'),
-        keyEnv: String(body.keyEnv || 'GATEWAY_API_KEY').trim(),
-        models: (Array.isArray(body.models) ? body.models : []).map((m) => ({ id: String(m.id || '').trim(), image: !!m.image })).filter((m) => m.id),
-        compat: body.compat === false ? null : { supportsDeveloperRole: false, maxTokensField: 'max_tokens' },
-        updated: new Date().toISOString(),
-      };
-      if (!/^[a-z0-9][a-z0-9-]*$/.test(s.id)) return send(400, { error: '站点 ID 只能是小写字母/数字/连字符' });
-      if (!/^https?:\/\//.test(s.baseURL)) return send(400, { error: '接口地址必须以 http:// 或 https:// 开头' });
-      if (!s.models.length) return send(400, { error: '至少需要一个模型 ID' });
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(s.keyEnv)) return send(400, { error: '密钥变量名必须是合法的环境变量名' });
-      const cleaned = siteLib.writeOverlay(s);
-      secretLib.setKeyName(s.keyEnv);
-      return send(200, { ok: true, cleanedLines: cleaned, overlay: siteLib.OVERLAY, state: state() });
+      // 旧的单站点接口：站点表（data\sites.json）已是唯一事实来源，这条路会让浏览器里
+      // 缓存的旧页面绕开新逻辑、写进另一个状态文件（data\site.json），所以直接下线。
+      return send(410, { error: '该接口已下线，请刷新页面（新接口是 /api/sites）' });
     }
 
     if (p === '/api/site/clear' && req.method === 'POST') {
-      if (fs.existsSync(siteLib.OVERLAY)) fs.unlinkSync(siteLib.OVERLAY);
-      const cleaned = siteLib.stripFromProfilePatch(state().site ? state().site.id : undefined);
-      try { fs.unlinkSync(siteLib.STATE); } catch (e) { /* already gone */ }
-      return send(200, { ok: true, cleanedLines: cleaned, state: state() });
+      return send(410, { error: '该接口已下线，请刷新页面（新接口是 /api/sites/delete）' });
     }
 
     if (p === '/api/key' && req.method === 'POST') {
-      const pass = String(body.pass || '');
+      // 口令优先用请求体里的；页面已登录时直接复用会话里的口令——
+      // 前端就不必把口令再存一份，也就没有"口令在页面里长久驻留"的问题。
+      const pass = String(body.pass || '') || (requireLogin() ? SESSION.pass : '');
       const key = String(body.key || '');
-      if (!pass) return send(400, { error: '口令不能为空' });
+      if (!pass) return send(400, { error: '口令不能为空（请先解锁）' });
       if (!key) return send(400, { error: '密钥不能为空' });
       const sitesLib2 = require('./sites.js');
       const st = sitesLib2.readState();
@@ -619,7 +605,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === '/' || url.pathname === '/index.html') {
     let html = '';
-    try { html = fs.readFileSync(PAGE, 'utf8'); } catch (e) { html = '<h1>缺少 ui/config.html</h1>'; }
+    try { html = fs.readFileSync(PAGE, 'utf8'); } catch (e) { html = '<h1>缺少 ui/app.html</h1>'; }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     return res.end(html);
   }

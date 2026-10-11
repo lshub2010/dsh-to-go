@@ -13,7 +13,7 @@ deepseek-harness\
 ├─ dsh-cli.cmd        ← 命令行入口：dsh-cli.cmd headless "任务" / --version / --profile xxx
 ├─ dsh-config.cmd     ← 维护台：自检 / 升级 / 切换槽位 / 备份 / 设置密钥
 ├─ dsh-doctor.cmd     ← 一键自检
-├─ dsh-ui.cmd         ← 图形配置页（浏览器里配置，推荐）
+├─ dsh-ui.cmd         ← 图形页（浏览器里配置，推荐）
 ├─ runtime\           【代码层】升级时整体替换，删掉不影响数据
 │   ├─ node\          便携 Node v26.7.0（官方 win-x64 发行版解压版）
 │   ├─ agent-A\       dsh 0.2.0-rc.2（当前空闲槽＝回滚目标）
@@ -22,13 +22,13 @@ deepseek-harness\
 │   ├─ current.txt    活动槽指针：写 agent-A 或 agent-B，一行搞定回滚
 │   └─ port.txt       Web 端口，默认 3180
 ├─ data\              【数据层】DSH_HOME：profiles / sessions / storages / cache / agents / logs
-├─ secrets\           model-key.enc（AES-256-GCM + scrypt）与 key-name.txt
+├─ secrets\           keys.enc（多站点密钥库：AES-256-GCM + scrypt）
 ├─ backups\           升级前自动打的 data-*.zip
-├─ ui\config.html      图形配置页（单文件，无外链）
+├─ ui\app.html      图形页（单文件，无外链）
 ├─ tools\             launcher / 密钥 / 维护脚本
 │   ├─ launch.js  secret.js  config.js   启动器、A2 密钥、维护台
-│   ├─ site.js                            非官方站点/覆盖层配置器
-│   ├─ ui-server.js                       图形配置页的本地服务（127.0.0.1 + 令牌）
+│   ├─ sites.js                            多站点表 + 覆盖层生成 + 模型探测
+│   ├─ ui-server.js                       图形页的本地服务（127.0.0.1 + 令牌）
 │   ├─ ask.js                             统一的问答读取（脚本化也能用）
 │   ├─ say.cmd                            中文提示打印器（.cmd 调用）
 │   └─ msg\*.txt                          中文提示文案（UTF-8，想改提示语改这里）
@@ -37,10 +37,10 @@ deepseek-harness\
 
 ## 2. 第一次使用（三步）
 
-> **推荐走图形配置页**：双击 `dsh-ui.cmd`（或维护台 `9) 图形配置`）→ 浏览器打开本地配置页，站点、密钥、槽位、升级、诊断都在一个页面里点点点。命令行方式如下。
+> **推荐走图形页**：双击 `dsh-ui.cmd`（或维护台 `9) 打开图形页`）→ 浏览器打开本地配置页，站点、密钥、槽位、升级、诊断都在一个页面里点点点。命令行方式如下。
 
 1. **存密钥**：双击 `dsh-config.cmd` → 选 `5) key` → 输入两遍口令（不落盘）＋粘贴 API key（隐藏输入）。
-   结果：`secrets\model-key.enc`，里面只有密文。**口令和密钥都不写进 `data\`，也不进命令行参数。**
+   结果：`secrets\keys.enc`，里面只有密文。**口令和密钥都不写进 `data\`，也不进命令行参数。**
    - 如果你的站点是**中转/网关（非官方 DeepSeek）**：先做 `7) 站点/模型` 再存密钥，这样注入的变量名会与站点要求的 `apiKeyEnv` 一致。
    - 已经存过密钥、之后才配站点：**不用重新输入密钥**，启动时会自动按新变量名注入。
 2. **启动**：双击 `dsh.cmd` → 输入上一步的口令 → 控制台打印带 token 的地址并自动打开浏览器。
@@ -57,8 +57,8 @@ dsh.cmd --no-key            ← 跳过密钥直接启动（只验证界面/配�
 
 ## 3. 密钥是怎么保管的
 
-- 存储：`secrets\model-key.enc` = AES-256-GCM 密文，密钥由 scrypt(N=16384) 从你的口令派生；口令本身不存任何地方。
-- 使用：启动器在内存里解密 → **只注入子进程环境变量**（默认名 `DEEPSEEK_API_KEY`，可在 `secrets\key-name.txt` 改）→ dsh 的凭据解析「启动环境 > 存储文件 > .env」，环境层优先级最高。
+- 存储：`secrets\keys.enc` = AES-256-GCM 密文，密钥由 scrypt(N=16384) 从你的口令派生；口令本身不存任何地方。
+- 使用：启动器在内存里解密 → **只注入子进程环境变量**（默认名 `<站点ID>_API_KEY`，可在 `站点表 data\sites.json 里的 keyEnv` 改）→ dsh 的凭据解析「启动环境 > 存储文件 > .env」，环境层优先级最高。
 - 已验证：错误口令 3 次即拒绝启动；子进程确实拿到该变量；`grep` 全盘搜不到密钥或口令明文。
 - 边界（务必知道）：
   - 这防的是「**U 盘丢了 / 换机器留下痕迹**」，**不防 agent 本身**——dsh 官方文档也写明，agent 的工具进程与你是同一个 OS 用户，文件权限无法把机密对它隔离。
@@ -113,13 +113,13 @@ dsh-config.cmd
 | 站点 ID | 小写字母/数字/连字符，如 `my-relay`；写进配置后别再改（会话与凭据引用都用它） |
 | 接口地址 | **要含 `/v1`**，如 `https://api.example.com/v1` |
 | 协议 | 1) OpenAI Chat Completions 2) OpenAI Responses 3) Anthropic Messages。一个站点只能选一种，两种都提供就配两个站点 |
-| 密钥变量名 | 默认 `GATEWAY_API_KEY`，决定启动时把密钥注入成哪个环境变量 |
+| 密钥变量名 | 默认 `<站点ID>_API_KEY`，决定启动时把密钥注入成哪个环境变量 |
 | 模型 ID | 逗号分隔；图片模型写成 `名字?image` |
 | 兼容修正 | 推荐 `Y`（见下） |
 
-写入 `data\site-patch.yml`（一份独立覆盖文件），启动 `dsh.cmd` 时由启动器作为 `--patch` 传给 dsh。`data\profiles\web\cordis.patch.yml` **完全归 dsh 与它的 Web UI 所有**，本工具不再往里写（旧版本写在那里的块会在下次配置时自动清理，你的 UI 设置原样保留）。同时同步密钥变量名。**密钥不需要重新输入**：已有加密密钥时，启动器会按新变量名注入它（变量名以 `secrets\key-name.txt` 为准，随时可在官方/中转之间切换）。
+写入 `data\site-patch.yml`（一份独立覆盖文件），启动 `dsh.cmd` 时由启动器作为 `--patch` 传给 dsh。`data\profiles\web\cordis.patch.yml` **完全归 dsh 与它的 Web UI 所有**，本工具不再往里写（旧版本写在那里的块会在下次配置时自动清理，你的 UI 设置原样保留）。同时同步密钥变量名。**密钥不需要重新输入**：已有加密密钥时，启动器会按新变量名注入它（变量名以 `站点表 data\sites.json 里的 keyEnv` 为准，随时可在官方/中转之间切换）。
 
-懒得敲命令行就用图形页：双击 `dsh-ui.cmd`，或维护台 `9) 图形配置`——站点表单里有协议下拉、模型多行输入、兼容开关和「验收」按钮。
+懒得敲命令行就用图形页：双击 `dsh-ui.cmd`，或维护台 `9) 打开图形页`——站点表单里有协议下拉、模型多行输入、兼容开关和「验收」按钮。
 
 **两个最常见的拒签**（dsh 文档原话："多数 OpenAI 兼容网关至少会拒绝 OpenAI 所接受的某一样东西"）：
 - 网关拒绝 `role: "developer"` → `compat.supportsDeveloperRole: false`
