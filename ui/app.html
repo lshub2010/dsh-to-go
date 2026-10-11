@@ -636,24 +636,41 @@ el('btn-switch').addEventListener('click', async () => {
 let SITES = [];
 let EDITING = null;
 let KEY_LENGTHS = {};   // siteId → 已保存密钥长度（用于星号填充提示）
+let PROBE_CACHE = {};   // 模型列表缓存（按站点 ID 或「地址+协议」）
+
+/** 与后端同一个规则：先按站点 ID 找，再按「地址+协议」找；地址或协议不符不认。 */
+function cacheLookup(site) {
+  const c = PROBE_CACHE || {};
+  const s = site || {};
+  const norm = (x) => String(x || '').trim().replace(/\/+$/, '');
+  const keys = [];
+  if (s.id) keys.push('site:' + s.id);
+  if (s.baseURL) keys.push('url:' + norm(s.baseURL) + '|' + (s.api || 'openai-completions'));
+  for (const k of keys) {
+    const e = c[k];
+    if (!e) continue;
+    if (s.baseURL && e.baseURL && norm(e.baseURL) !== norm(s.baseURL)) continue;
+    if (s.api && e.api && e.api !== s.api) continue;
+    return e;
+  }
+  return null;
+}
+function ago(iso) {
+  const t = Date.parse(iso || '');
+  if (!t) return '时间未知';
+  const d = Date.now() - t;
+  if (d < 60000) return '刚刚';
+  if (d < 3600000) return Math.floor(d / 60000) + ' 分钟前';
+  if (d < 86400000) return Math.floor(d / 3600000) + ' 小时前';
+  return Math.floor(d / 86400000) + ' 天前';
+}
+
 async function loadSites() {
   const r = await api('/api/sites');
   SITES = r.sites || [];
   KEY_LENGTHS = r.keyLengths || {};
-  const box = el('site-list');
-  if (!SITES.length) { box.innerHTML = '（还没有站点）'; }
-  else {
-    box.innerHTML = SITES.map((s) => {
-      const models = (s.models || []).map((m) => '<span class="tag' + (m.image ? ' vision' : '') + '">' + esc(m.id) + (m.image ? ' · 含图' : '') + '</span>').join('');
-      return '<div class="site"><div class="top"><div class="title">' + esc(s.id) +
-        (s.name ? '<span class="sub">（' + esc(s.name) + '）</span>' : '') +
-        (s.enabled === false ? '<span class="pill warn">已停用</span>' : '<span class="pill ok">启用中</span>') +
-        '</div><div class="row"><button class="btn" data-edit="' + esc(s.id) + '">编辑</button></div></div>' +
-        '<div class="sub mono" style="margin-top:6px">' + esc(s.baseURL) + '　' + esc(s.api) + '　变量名 ' + esc(s.keyEnv) + '</div>' +
-        '<div style="margin-top:6px">' + models + '</div></div>';
-    }).join('');
-    box.querySelectorAll('button[data-edit]').forEach((b) => b.addEventListener('click', () => openEditor(b.dataset.edit)));
-  }
+  PROBE_CACHE = r.probeCache || {};
+  renderSiteList();
   // 默认模型下拉
   const ds = el('d-site'), dm = el('d-model');
   ds.innerHTML = SITES.map((s) => '<option value="' + esc(s.id) + '"' + (s.enabled === false ? ' disabled' : '') + '>' + esc(s.id) + (s.enabled === false ? '（停用）' : '') + '</option>').join('');
@@ -661,6 +678,24 @@ async function loadSites() {
   if (cur) ds.value = cur;
   fillModels();
   return r;
+}
+
+/** 站点卡片列表（单独一个函数，方便在状态变化后局部重画，也方便被测试直接调用）。 */
+function renderSiteList() {
+  const box = el('site-list');
+  if (!SITES.length) { box.innerHTML = '（还没有站点）'; return; }
+  box.innerHTML = SITES.map((s) => {
+    const models = (s.models || []).map((m) => '<span class="tag' + (m.image ? ' vision' : '') + '">' + esc(m.id) + (m.image ? ' · 含图' : '') + '</span>').join('');
+    const c = cacheLookup(s);
+    const cacheLine = c ? '<div class="sub" style="margin-top:4px">模型列表已缓存：' + c.count + ' 个（' + ago(c.at) + '）</div>' : '';
+    return '<div class="site"><div class="top"><div class="title">' + esc(s.id) +
+      (s.name ? '<span class="sub">（' + esc(s.name) + '）</span>' : '') +
+      (s.enabled === false ? '<span class="pill warn">已停用</span>' : '<span class="pill ok">启用中</span>') +
+      '</div><div class="row"><button class="btn" data-edit="' + esc(s.id) + '">编辑</button></div></div>' +
+      '<div class="sub mono" style="margin-top:6px">' + esc(s.baseURL) + '　' + esc(s.api) + '　变量名 ' + esc(s.keyEnv) + '</div>' +
+      '<div style="margin-top:6px">' + models + '</div>' + cacheLine + '</div>';
+  }).join('');
+  box.querySelectorAll('button[data-edit]').forEach((b) => b.addEventListener('click', () => openEditor(b.dataset.edit)));
 }
 function fillModels() {
   const s = SITES.find((x) => x.id === el('d-site').value);
@@ -692,13 +727,25 @@ function openEditor(id) {
   el('s-compat').checked = !!(s && s.compat);
   el('s-enabled').checked = !s || s.enabled !== false;
   MODELS = s ? (s.models || []).map((m) => ({ id: m.id, image: !!m.image, contextWindow: m.contextWindow || null })) : [];
-  PROBED = [];
+  // 模型列表直接用缓存（上次拉过的），不用每次重新拉；点「拉取模型」才刷新
+  const cached = cacheLookup({ id: EDITING, baseURL: s ? s.baseURL : '', api: s ? s.api : '' });
+  PROBED = cached ? cached.models.map((m) => m.id) : [];
   PROBED_CTX = {};
+  if (cached) for (const m of cached.models) if (m.contextWindow) PROBED_CTX[m.id] = m.contextWindow;
+  el('m-id').placeholder = PROBED.length
+    ? ('点右边箭头从 ' + PROBED.length + ' 个模型里选，或直接输入')
+    : '请先获取模型或手动输入模型';
   el('model-form').hidden = true;
   hideDd();
   renderModelList();
   el('btn-site-del').hidden = !s;
-  clearFlash('site-edit-out'); clearFlash('s-probe-out');
+  clearFlash('site-edit-out');
+  if (cached) {
+    flash('s-probe-out', '模型列表用的是上次拉取的结果（' + cached.count + ' 个，' + ago(cached.at) +
+      '）：可以直接点选；要刷新就点「拉取模型」。', 'warn');
+  } else {
+    clearFlash('s-probe-out');
+  }
   el('s-id').focus();
 }
 el('btn-site-new').addEventListener('click', () => openEditor(null));
@@ -817,10 +864,17 @@ el('btn-probe').addEventListener('click', (e) => withBusy(e.currentTarget, '拉�
     PROBED = r.models || [];
     PROBED_CTX = {};
     for (const d of (r.details || [])) if (d && d.contextWindow) PROBED_CTX[d.id] = d.contextWindow;
+    // 记进本地缓存，这样不刷新页面也能立刻用；后端也已经落盘了
+    const key = EDITING ? ('site:' + EDITING) : ('url:' + String(el('s-url').value.trim()).replace(/\/+$/, '') + '|' + el('s-api').value);
+    PROBE_CACHE[key] = {
+      at: new Date().toISOString(), baseURL: el('s-url').value.trim(), api: el('s-api').value,
+      count: PROBED.length,
+      models: PROBED.map((id) => (PROBED_CTX[id] ? { id, contextWindow: PROBED_CTX[id] } : { id })),
+    };
     const withCtx = Object.keys(PROBED_CTX).length;
     el('m-id').placeholder = PROBED.length ? ('点右边箭头从 ' + PROBED.length + ' 个模型里选，或直接输入') : '拉到了 0 个模型，可以手动输入';
     flash('s-probe-out', '拉到 ' + PROBED.length + ' 个模型' + (withCtx ? ('，其中 ' + withCtx + ' 个带上下文信息') : '') +
-      '。点「添加模型」后可以从列表点选。', 'ok');
+      '。已记下来，之后加模型不用再拉。', 'ok');
   } catch (err) { flash('s-probe-out', '拉取失败：' + err.message, 'err'); }
 }));
 el('btn-site-save').addEventListener('click', (e) => withBusy(e.currentTarget, '保存中…', async () => {

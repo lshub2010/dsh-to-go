@@ -270,6 +270,58 @@ function writeOverlay(state, opts) {
   return { overlay: OVERLAY, backup, text, unchanged: false };
 }
 
+// ------------------------------------------------------------------ 模型列表缓存
+// 探测一次就是一次网络往返（有的网关还慢），而模型清单很少变。缓存下来，
+// 下次「添加模型」直接点选，不必先拉一遍。
+// 缓存键：优先按站点 ID；新建站点还没有 ID 时按「地址 + 协议」存，保存站点后自动认领过去。
+function probeCacheKey(site) {
+  const s = site || {};
+  if (s.id && ID_RE.test(String(s.id))) return 'site:' + s.id;
+  const base = String(s.baseURL || '').trim().replace(/\/+$/, '');
+  if (!base) return null;
+  return 'url:' + base + '|' + String(s.api || 'openai-completions');
+}
+
+function probeCachePut(cache, site, probe) {
+  const c = Object.assign({}, cache || {});
+  const key = probeCacheKey(site);
+  if (!key || !probe || !Array.isArray(probe.models) || !probe.models.length) return c;
+  const details = probe.details || [];
+  c[key] = {
+    at: new Date().toISOString(),
+    baseURL: String((site && site.baseURL) || '').trim(),
+    api: String((site && site.api) || 'openai-completions'),
+    count: probe.models.length,
+    models: probe.models.map((id, i) => {
+      const d = details[i] || {};
+      return d.contextWindow ? { id, contextWindow: d.contextWindow } : { id };
+    }),
+  };
+  return c;
+}
+
+/** 取缓存；地址或协议跟当前站点对不上就不认（改过地址还沿用旧模型列表会出错）。 */
+function probeCacheGet(cache, site) {
+  const c = cache || {};
+  const s = site || {};
+  const keys = [probeCacheKey(s), probeCacheKey({ baseURL: s.baseURL, api: s.api })].filter(Boolean);
+  const norm = (x) => String(x || '').trim().replace(/\/+$/, '');
+  for (const key of keys) {
+    const e = c[key];
+    if (!e) continue;
+    if (s.baseURL && e.baseURL && norm(e.baseURL) !== norm(s.baseURL)) continue;
+    if (s.api && e.api && e.api !== s.api) continue;
+    return e;
+  }
+  return null;
+}
+
+function probeCacheDrop(cache, siteId) {
+  const c = Object.assign({}, cache || {});
+  if (siteId) delete c['site:' + siteId];
+  return c;
+}
+
 /**
  * 探测站点的模型列表。两种常见形状都认：
  *   OpenAI  : { data: [ { id } ] }
@@ -361,6 +413,7 @@ module.exports = {
   PROVIDER_ENTRY, DEFAULT_MODEL_ENTRY, PROTOCOLS,
   keyEnvFor, emptyState, normalizeSite, readState, writeState, upsert, removeSite, setDefault,
   buildOverlay, writeOverlay, probeModels,
+  probeCacheKey, probeCachePut, probeCacheGet, probeCacheDrop,
 };
 
 if (require.main === module) {

@@ -272,6 +272,33 @@ test('模型上下文：合法值进覆盖层，auto 不写，非法值当场拒
   }
 });
 
+test('模型列表缓存：按站点存、地址/协议变了失效、空结果不覆盖、删除站点清掉', () => {
+  const probe = { ok: true, models: ['m1', 'm2'], details: [{ id: 'm1' }, { id: 'm2', contextWindow: 32000 }] };
+  const site = { id: 'demo', baseURL: 'https://d/v1', api: 'openai-completions' };
+  const cache = S.probeCachePut({}, site, probe);
+  assert.ok(cache['site:demo'], '按站点 ID 存');
+  assert.strictEqual(cache['site:demo'].count, 2);
+  assert.deepStrictEqual(cache['site:demo'].models[1], { id: 'm2', contextWindow: 32000 }, '带上下文的模型要留着');
+  assert.strictEqual(S.probeCacheGet(cache, site).count, 2, '同一个站点能取到');
+
+  // 地址改了就不认旧列表（否则会拿旧网关的模型去配新网关）
+  assert.strictEqual(S.probeCacheGet(cache, { id: 'demo', baseURL: 'https://other/v1', api: 'openai-completions' }), null);
+  // 协议改了也不认
+  assert.strictEqual(S.probeCacheGet(cache, { id: 'demo', baseURL: 'https://d/v1', api: 'anthropic-messages' }), null);
+
+  // 还没保存 ID 的新站点：按「地址+协议」存；保存后按 ID 也能命中（页面/服务端都会认领）
+  const c2 = S.probeCachePut({}, { baseURL: 'https://new/v1', api: 'openai-completions' }, probe);
+  assert.ok(c2['url:https://new/v1|openai-completions']);
+  assert.strictEqual(S.probeCacheGet(c2, { baseURL: 'https://new/v1', api: 'openai-completions' }).count, 2);
+  assert.strictEqual(S.probeCacheGet(c2, { id: 'newer', baseURL: 'https://new/v1', api: 'openai-completions' }).count, 2, '按地址也能命中');
+
+  // 拉到空列表不该把已有缓存清掉（网关临时抽风）
+  const c3 = S.probeCachePut(cache, site, { ok: true, models: [] });
+  assert.strictEqual(c3['site:demo'].count, 2);
+
+  assert.strictEqual(S.probeCacheDrop(cache, 'demo')['site:demo'], undefined, '删站点要清缓存');
+});
+
 test('版本比较器（ui-server 的 cmpVersion）：预发布顺序与正式版优先', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'tools', 'ui-server.js'), 'utf8');
   const fn = src.match(/function cmpVersion[\s\S]*?\n}/);

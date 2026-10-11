@@ -1,0 +1,105 @@
+# AGENTS.md —— 给下一位（人或 AI）的交接说明
+
+本文件是这个仓库的**项目级记忆**：记录「已经验证过的事实」「踩过的坑」「约定」，避免下一个人从头摸。
+凡是这里写了「实测／已验证」的，都真跑过；写「未验证」的，别当成结论。
+
+---
+
+## 1. 这是什么
+
+把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（命令 `dsh`）做成**插上就能用、拔下来什么都不留**的便携 Agent：
+
+- 运行环境（便携 Node）与 dsh 本体都装在盘上，宿主不用装 Node/npm；
+- 所有状态（会话、工作区、配置、密钥）都在盘上，跟着盘走；
+- 宿主零污染：只用**进程内环境变量**，从不 `setx`，从不写宿主家目录；
+- 密钥以密文存盘，口令不落盘、只在启动瞬间进内存；
+- A/B 双槽升级：装到空闲槽 → 自检 → 才切指针，随时回滚。
+
+**本项目不是 dsh 的 fork**：不打包、不改写它的代码，构建时从 npm 现装。dsh 的所有权与许可是 DeepSeek AI 的（MIT）；本仓库只提供便携化外壳与运维工具，同样是 MIT。
+
+## 2. 约定（改代码前先读）
+
+1. **网页向导是唯一入口**：`dsh-ui.cmd` 起本地页面（首次向导 + 概览 / 站点和模型 / 升级 / 诊断 / 插件）。命令行工具（`dsh-config.cmd` 等）保留作备用，但**新功能优先做进页面**。
+2. **站点表是唯一事实来源**：`data\sites.json`。`data\site-patch.yml` 是由它生成的覆盖层；`data\site.json` 是旧格式，只在读取时兼容、不再写入。旧的 `/api/site` 接口已下线（返回 410），别加回来。
+3. **密钥三条红线**：不明文落盘、不进命令行参数、不进日志。口令只存在服务进程内存（`/api/login` 之后），启动 dsh 时经**子进程环境变量**传给启动器。
+4. **上游文件不要碰**：`data\profiles\*\cordis.patch.yml` 永远归 dsh 与其 Web UI 所有；我们的配置一律走自己的覆盖层（`--patch`）。
+5. **页面零外链**：单文件 `ui/app.html`，不引 CDN／外链字体（离线盘会挂）。颜色与字体用页面顶部的 CSS 变量。
+6. **编码**：`.cmd` 必须纯 ASCII（cmd.exe 用系统 ANSI 解析 .bat，UTF-8 中文会破坏括号配对）；`.ps1` 含中文必须存 **UTF-8 with BOM**（Windows PowerShell 5.1 只认带 BOM 的）。
+7. **删除类操作要有前置条件**：删密钥库必须显式确认 + 再验口令；删站点时「是否连密钥一起删」单独问一次。
+8. **面向玩家的界面不暴露内部实现**：这条界面全部是给运维/使用者看的，但日志与界面文案要区分开——细节进日志。
+
+## 3. 目录
+
+```
+build.cmd / build.ps1     一次性构建：下载并校验便携 Node，然后打开图形向导（-Cli 走命令行双槽安装）
+dsh.cmd                   启动 dsh 自己的 Web UI
+dsh-ui.cmd                图形向导与主页面（本地服务，127.0.0.1）
+dsh-config.cmd            终端维护台（自检/升级/切槽/备份/密钥/站点）
+dsh-cli.cmd               命令行用法（--version、headless "任务"）
+dsh-doctor.cmd            一键自检
+tools/
+  launch.js               启动器：解锁密钥 → 组环境 → 注入覆盖层 → 起 dsh
+  sites.js                多站点表 + 覆盖层生成 + /models 探测
+  secret.js               密钥层（v2 多站点密钥库 + verifier + 旧格式迁移）
+  jobs.js                 后台任务引擎（锁、增量日志、状态机、取消/中断识别）
+  install.js              双槽安装器（npm 装、双源回退）
+  ui-server.js            本地页面服务（登录会话、dsh 启停、任务、站点、版本列表、模型缓存、自检）
+  config.js / site.js     维护台与旧单站点工具（site.js 仅保留 dump/migrate 等）
+ui/app.html               单文件页面（零外链）
+tests/                    node --test 单测
+docs/                     DESIGN（设计取舍）/ USAGE（使用）/ ROADMAP（计划与审查记录）
+runtime/ data/ secrets/ backups/   运行产物，**不进 git**
+```
+
+## 4. 已验证的技术事实（别推翻，除非你重新验证）
+
+- **dsh 配置字段**（`llm-pi-ai` 提供方，模型条目）：
+  `apiKeyEnv` / `api` / `baseURL` / `compat` / `models: [{ id, input, contextWindow, maxTokens, name, reasoningEfforts, compat }]`。
+  - **`input: [text, image]` 才是「支持图片」的正确写法**（不是 `image:`）；
+  - **`contextWindow` 必须是 ≥1 的整数**，不写就是用 dsh 默认值（界面里显示为 auto）；
+  - 两者都可用 `null`。
+  依据：`dsh --dump-config-schema` 打出的官方 schema（`contextWindow`/`maxTokens` = `integer, minimum 1`），以及 headless 实测——写成 `0` 时 dsh 当场报
+  `ValidationError: $.providers.<站点>.models[0].contextWindow expected number >= 1 but got 0`。
+- **`--dump-config` 只拼配置树、不校验深层字段**（非法值也退出码 0）。要验证字段是否真被识别，必须让它**挂载**，例如
+  `dsh --profile headless --patch <file> "你好"`。
+- **参数顺序**：`--patch <file>` 必须跟在 profile/命令之后（`--profile web --patch f …`）；裸的 `--patch f web` 会被 dsh 拒绝。
+- **端口冲突不会自动换端口**：dsh 直接 `EADDRINUSE` 退出。本盘默认 3180（宿主自装的 dsh 默认 3080，可共存；浏览器 cookie 按 host+port 分，所以别共用端口）。
+- **旧密钥格式兼容**：`secrets\model-key.enc`（单密钥）+ `secrets\key-name.txt` 会被自动读；启动器会用旧文件补齐 v2 库里缺的站点，所以**升级工具后现有密钥不会突然失效**。迁移到 v2（多站点）在页面上一键完成，需要用户口令。
+- **旧站点配置兼容**：`data\site.json`（单站点）会被读成多站点结构，重新生成的覆盖层里站点不会丢。
+- **版本列表**：从 npm registry 取（官方源 → npmmirror 自动回退，5 分钟缓存）。`latest`/`next`/`alpha` 三条标签并存，界面只让用户点选，也留手动输入。
+- **目录体积很贵**：遍历整棵 `runtime\` 上万个文件要 2～3 秒（慢盘更久）。已做 60 秒内存缓存 + `runtime\sizes.json` 落盘缓存（首次先用上次的值、后台重算）。别把 `dirSize()` 直接放回热路径。
+- **模型列表可缓存**：探测结果按站点存 `data\probe-cache.json`（带 baseURL/协议与时间戳，站点地址或协议改了自动失效），页面打开站点时直接用缓存，不必每次重新拉取。
+
+## 5. 怎么验（每次改完至少跑这些）
+
+```bat
+runtime\node\node.exe --test tests\sites.test.js tests\secret.test.js tests\launch.test.js tests\jobs.test.js
+```
+
+- 单测覆盖：站点表与覆盖层生成、密钥库（含「损坏库拒写」「缺 verifier 拒重建」「单条坏掉的部分解密」「写锁」）、任务引擎（锁、取消竞态、阶段识别）、安装器参数校验、版本比较器。
+- 改页面（`ui/app.html`）后至少确认：无令牌打开 403；带 `?token=` 能开；未登录时写操作 401；自检能出表格；保存站点后覆盖层里能看到 provider；新增模型后填的上下文/视觉确实出现在覆盖层里。
+- 改动涉及 dsh 配置字段时，**用真实 dsh 验一遍**（见第 4 节的反向对照），不要只靠「dump 没报错」。
+- 真安装 / 真启动是慢验证（首次装一个槽 5～12 分钟），不要把「构建成功」说成「业务跑通」。
+
+## 6. 已知坑（都踩过）
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| `sandbox-local … temp grant materialization failed` | Windows ACL 沙箱要在 `os.tmpdir()` 下写安全描述符，需要目录的 `WRITE_OWNER`；数据盘根目录通常没有。启动器默认把临时目录放宿主 `%LOCALAPPDATA%\Temp`。 |
+| 中文提示乱码 / 截断 | `.cmd` 保持纯 ASCII，中文放 `tools\msg\*.txt`（UTF-8）由 `tools\say.cmd` 打印；`.ps1` 存 UTF-8 with BOM。 |
+| 页面卡在「加载中」 | `/api/state` 要算目录体积（上万个文件）。已缓存（见第 4 节）。 |
+| 密钥框里出现一串 `*` | 那是「已保存密钥长度」的占位提示，不是真密钥；留空即不修改。服务端也拒绝把纯星号当密钥存。 |
+| 首次启动时站点配置不生效 | 启动器必须**先刷新覆盖层、再决定 `--patch` 参数**——顺序反了会导致「站点已配但覆盖层文件还没生成」的那次启动不带 `--patch`。 |
+| 宿主上也装了 dsh，互相打架 | 共享端口、浏览器 cookie 与 PATH/模块解析。启动器无条件覆盖 `DSH_HOME`/`DSH_AGENTS_HOME`/`npm_config_cache`，且从不碰宿主的 `~/.agents`。 |
+
+## 7. 还没做的
+
+- **插件页**：按 profile 列条目 + 停用/启用（写 `disabled` 覆盖）+ 安装/卸载。页面现在如实标注「尚未接通」——**不要放假的能点按钮**。`/api/sites` 已经带回 `disabledPlugins`，字段口子留好了。
+- 把较重的端到端验收脚本（页面接口 + 运行期 DOM 桩检查）整理进仓库（目前是外部一次性脚本）。
+- 上游 dsh 仍是 developer preview：版本之间可能不兼容，所以才有 A/B 双槽；升级流程永远是「装空闲槽 → 校验 → 才切指针」。
+
+## 8. 提交约定
+
+- 默认分支 `main`，个人开源项目，改动可直接提交 `main`（不需要 PR 流程）。
+- 提交信息写清「改了什么 + 为什么 + 怎么验的」；行为变更同步更新 `docs/ROADMAP.md` 的记录表。
+- 运行产物（`runtime/`、`data/`、`secrets/`、`backups/`、`*.enc`）已在 `.gitignore` 里，**不要**为了「方便复现」提交它们。

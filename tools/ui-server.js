@@ -29,7 +29,9 @@ const jobsLib = require('./jobs.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const RUNTIME = path.join(ROOT, 'runtime');
-const DATA = path.join(ROOT, 'data');
+// 和 sites.js 保持一致：数据目录可以被 WZD_DATA_DIR 重定向（测试/多实例用），
+// 否则测试会往仓库真实的 data\ 里写文件（探测缓存、插件清单、启动器日志都读它）。
+const DATA = process.env.WZD_DATA_DIR || path.join(ROOT, 'data');
 const NODE_EXE = path.join(RUNTIME, 'node', 'node.exe');
 const PAGE = path.join(ROOT, 'ui', 'app.html');
 const PORT_FILE = path.join(RUNTIME, 'port.txt');
@@ -148,6 +150,20 @@ async function fetchVersions(force) {
     }
   }
   return { ok: false, error: '取不到版本列表（' + lastErr + '）' };
+}
+
+// ------------------------------------------------------------------ 探测结果落盘
+// 跟着盘走：换台机器 / 重开页面都不用重新拉一遍模型列表。
+const PROBE_CACHE_FILE = path.join(DATA, 'probe-cache.json');
+function readProbeCache() {
+  try { return JSON.parse(fs.readFileSync(PROBE_CACHE_FILE, 'utf8')); } catch (e) { return {}; }
+}
+function writeProbeCache(c) {
+  try {
+    fs.mkdirSync(DATA, { recursive: true });
+    fs.writeFileSync(PROBE_CACHE_FILE, JSON.stringify(c, null, 2), 'utf8');
+    return true;
+  } catch (e) { return false; }
 }
 
 /**
@@ -623,6 +639,7 @@ async function handleApi(req, res, url) {
       } catch (e) { keyLengths = {}; }
       return send(200, {
         sites: st.sites, default: st.default, keyLengths,
+        probeCache: readProbeCache(),
         overlay: sitesLib.OVERLAY, overlayExists: fs.existsSync(sitesLib.OVERLAY),
         disabledPlugins: readDisabledPlugins(),
       });
@@ -646,6 +663,17 @@ async function handleApi(req, res, url) {
         }
         sitesLib.writeState(st);
         const w = sitesLib.writeOverlay(st, { disabled: readDisabledPlugins() });
+        // 新建站点时模型列表是按「地址+协议」缓存的，这里认领到站点 ID 下（下次进编辑器直接用）
+        try {
+          const cache = readProbeCache();
+          const urlKey = sitesLib.probeCacheKey({ baseURL: siteId ? (st.sites.find((x) => x.id === siteId) || {}).baseURL : '', api: (st.sites.find((x) => x.id === siteId) || {}).api });
+          const siteKey = sitesLib.probeCacheKey({ id: siteId });
+          if (urlKey && siteKey && cache[urlKey] && !cache[siteKey]) {
+            cache[siteKey] = Object.assign({}, cache[urlKey], { adopted: true });
+            delete cache[urlKey];
+            writeProbeCache(cache);
+          }
+        } catch (e) { /* 缓存认领失败不影响保存 */ }
         return send(200, { ok: true, overlay: w.overlay, backup: w.backup, sites: st.sites, default: st.default, state: state() });
       } catch (e) {
         return send(400, { error: String(e && e.message || e) });
@@ -661,6 +689,7 @@ async function handleApi(req, res, url) {
       const w = sitesLib.writeOverlay(st, { disabled: readDisabledPlugins() });
       let keyRemoved = false;
       if (body.removeKey) keyRemoved = secretLib.removeKey(siteId);
+      try { writeProbeCache(sitesLib.probeCacheDrop(readProbeCache(), siteId)); } catch (e) { /* 缓存清不掉不影响删除 */ }
       return send(200, { ok: true, keyRemoved, overlay: w.overlay, sites: st.sites, default: st.default, state: state() });
     }
 
@@ -676,6 +705,11 @@ async function handleApi(req, res, url) {
         baseURL: String(body.baseURL || ''), api: String(body.api || 'openai-completions'),
         key, timeoutMs: Number(body.timeoutMs) || 15000,
       });
+      // 拉到了就记下来（按站点 ID，或按「地址+协议」等保存后认领），下次不用重新拉
+      if (r.ok && r.models.length) {
+        const merged = sitesLib.probeCachePut(readProbeCache(), { id: body.siteId, baseURL: body.baseURL, api: body.api }, r);
+        writeProbeCache(merged);
+      }
       return send(r.ok ? 200 : 502, r);
     }
 
