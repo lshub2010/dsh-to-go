@@ -111,6 +111,7 @@ function cmpVersion(a, b) {
 }
 
 let VERSIONS_CACHE = { at: 0, data: null };
+let PLUGIN_CACHE = { at: 0, data: null };
 /** 从 npm 官方源取 dsh 的版本列表（失败自动换 npmmirror；5 分钟内复用缓存）。 */
 async function fetchVersions(force) {
   const now = Date.now();
@@ -233,12 +234,11 @@ function requireLogin() {
   return !!SESSION.pass;
 }
 /** 插件停用清单（data\plugins.json，由插件页维护）。 */
-function readDisabledPlugins() {
-  try {
-    const j = JSON.parse(fs.readFileSync(path.join(DATA, 'plugins.json'), 'utf8'));
-    return Array.isArray(j.disabled) ? j.disabled : [];
-  } catch (e) { return []; }
+/** 插件启停状态（唯一事实来源在 tools/plugins.js：data\plugins.json）。 */
+function pluginState() {
+  try { return require('./plugins.js').readState(); } catch (e) { return { disabled: [], enabled: [] }; }
 }
+function readDisabledPlugins() { return pluginState().disabled; }
 function safeEqual(a, b) {
   const A = Buffer.from(String(a));
   const B = Buffer.from(String(b));
@@ -406,6 +406,8 @@ async function handleApi(req, res, url) {
   // 端口/临时目录这类不碰密钥的设置不在此列。
   const NEEDS_LOGIN = ['/api/key', '/api/key/clear', '/api/keys/migrate', '/api/site', '/api/site/clear',
     '/api/upgrade', '/api/jobs/install', '/api/jobs/upgrade', '/api/jobs/pnpm', '/api/jobs/cancel',
+    '/api/plugins/toggle', '/api/plugins/install', '/api/plugins/uninstall', '/api/plugins/allow-version',
+    '/api/plugins/pnpm-setup',
     '/api/dsh/start', '/api/dsh/stop', '/api/backup'];
   if (req.method === 'POST' && NEEDS_LOGIN.indexOf(p) >= 0 && !requireLogin()) {
     return send(401, { error: '需要先输入口令解锁（口令只存在本服务的内存里）' });
@@ -651,6 +653,92 @@ async function handleApi(req, res, url) {
       return send(v.ok ? 200 : 502, v);
     }
 
+    // ---------------------------------------------------------------- 插件
+    // 条目清单来自 dsh 自己的 --dump-config（慢，缓存 30 秒）；启停状态来自 data\plugins.json。
+    if (p === '/api/plugins' && req.method === 'GET') {
+      const P = require('./plugins.js');
+      const profile = url.searchParams.get('profile') || 'web';
+      const now = Date.now();
+      if (url.searchParams.get('force') === '1' || !PLUGIN_CACHE.data || (now - PLUGIN_CACHE.at) > 30000) {
+        PLUGIN_CACHE = { at: now, data: P.listEntries({ profile }) };
+      }
+      const d = PLUGIN_CACHE.data;
+      return send(200, {
+        ok: d.ok, error: d.error || null, profile,
+        pnpm: P.pnpmInfo(),
+        installed: P.listInstalled(profile),
+        entries: d.entries || [],
+        disabled: (d.state && d.state.disabled) || [],
+        enabled: (d.state && d.state.enabled) || [],
+        dshRunning: dshStatus().running,
+        cachedAt: new Date(PLUGIN_CACHE.at).toISOString(),
+      });
+    }
+
+    if (p === '/api/plugins/toggle' && req.method === 'POST') {
+      if (dshStatus().running) return send(409, { error: 'dsh 正在运行：插件启停会改启动配置，请先停止 dsh' });
+      const P = require('./plugins.js');
+      const id = String(body.id || '').trim();
+      if (!/^[A-Za-z0-9._:@/-]+$/.test(id)) return send(400, { error: '条目 id 不合法' });
+      if (P.RESERVED.indexOf(id) >= 0) return send(400, { error: '这是本工具自己的条目，不能在这里停用' });
+      const st0 = P.readState();
+      const disable = body.disabled !== false;
+      const disabled = st0.disabled.filter((x) => x !== id);
+      const enabled = st0.enabled.filter((x) => x !== id);
+      if (disable) disabled.push(id); else enabled.push(id);
+      const written = P.writeState({ disabled, enabled });
+      const sitesLib2 = require('./sites.js');
+      const w = sitesLib2.writeOverlay(sitesLib2.readState(), written);
+      PLUGIN_CACHE = { at: 0, data: null };
+      return send(200, {
+        ok: true, id, disabled: disable, state: written,
+        overlay: w.overlay, overlayBackup: w.backup,
+        note: '已写进覆盖层，重启 dsh 生效（停用错条目时 dsh 会在启动时报「Plugins waiting for services」）',
+      });
+    }
+
+    if (p === '/api/plugins/search' && req.method === 'GET') {
+      const P = require('./plugins.js');
+      const r = await P.searchNpm(url.searchParams.get('q'), { force: url.searchParams.get('force') === '1' });
+      return send(r.ok ? 200 : 502, r);
+    }
+
+    if (p === '/api/plugins/pnpm-setup' && req.method === 'POST') {
+      const r = jobsLib.spawnJob('pnpm-setup', {});
+      if (!r.ok) return send(409, { error: r.error });
+      return send(200, { ok: true, job: r.job });
+    }
+
+    if ((p === '/api/plugins/install' || p === '/api/plugins/uninstall') && req.method === 'POST') {
+      if (dshStatus().running) return send(409, { error: 'dsh 正在运行：请先停止 dsh 再装卸插件（会直接改 profile 目录）' });
+      const P = require('./plugins.js');
+      const name = String(body.name || '').trim();
+      if (!P.validPackageName(name)) return send(400, { error: '包名不合法：npm 包名形如 name 或 @scope/name' });
+      const profile = String(body.profile || 'web');
+      const verb = p === '/api/plugins/install' ? 'add' : 'remove';
+      const r = jobsLib.spawnJob('plugin-pnpm', { args: [verb, name], profile });
+      if (!r.ok) return send(409, { error: r.error });
+      PLUGIN_CACHE = { at: 0, data: null };
+      return send(200, { ok: true, job: r.job, command: 'dsh plugin --profile ' + profile + ' ' + verb + ' ' + name });
+    }
+
+    if (p === '/api/plugins/allow-version' && req.method === 'POST') {
+      // 版本闸门豁免：插件 peerDependencies 与当前 dsh 版本不匹配时，dsh 要求显式接受风险
+      if (dshStatus().running) return send(409, { error: 'dsh 正在运行：请先停止 dsh' });
+      const spec = String(body.spec || '').trim();
+      const ver = String(body.dshVersion || '').trim();
+      if (!/^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*@\S+$/.test(spec)) {
+        return send(400, { error: '豁免目标要写成「包名@版本」（照抄 dsh 日志里给出的那一行）' });
+      }
+      if (!ver || /\s/.test(ver)) return send(400, { error: '缺少 dsh 版本（日志里也会给出）' });
+      const r = jobsLib.spawnJob('plugin-pnpm', {
+        args: ['allow-version', spec, '--dsh-version', ver, '--accept-risk'],
+        profile: String(body.profile || 'web'),
+      });
+      if (!r.ok) return send(409, { error: r.error });
+      return send(200, { ok: true, job: r.job });
+    }
+
     if (p === '/api/sites' && req.method === 'POST') {
       const sitesLib = require('./sites.js');
       try {
@@ -662,7 +750,7 @@ async function handleApi(req, res, url) {
           if (s && s.enabled !== false) st = sitesLib.setDefault(st, s.id, s.models[0].id);
         }
         sitesLib.writeState(st);
-        const w = sitesLib.writeOverlay(st, { disabled: readDisabledPlugins() });
+        const w = sitesLib.writeOverlay(st, pluginState());
         // 新建站点时模型列表是按「地址+协议」缓存的，这里认领到站点 ID 下（下次进编辑器直接用）
         try {
           const cache = readProbeCache();
@@ -686,7 +774,7 @@ async function handleApi(req, res, url) {
       if (!/^[a-z0-9][a-z0-9-]*$/.test(siteId)) return send(400, { error: '站点 ID 不合法' });
       let st = sitesLib.removeSite(sitesLib.readState(), siteId);
       sitesLib.writeState(st);
-      const w = sitesLib.writeOverlay(st, { disabled: readDisabledPlugins() });
+      const w = sitesLib.writeOverlay(st, pluginState());
       let keyRemoved = false;
       if (body.removeKey) keyRemoved = secretLib.removeKey(siteId);
       try { writeProbeCache(sitesLib.probeCacheDrop(readProbeCache(), siteId)); } catch (e) { /* 缓存清不掉不影响删除 */ }
@@ -716,7 +804,7 @@ async function handleApi(req, res, url) {
     if (p === '/api/overlay/rebuild' && req.method === 'POST') {
       const sitesLib = require('./sites.js');
       const st = sitesLib.readState();
-      const w = sitesLib.writeOverlay(st, { disabled: readDisabledPlugins() });
+      const w = sitesLib.writeOverlay(st, pluginState());
       const dump = runSite(['dump']);
       return send(200, { ok: true, overlay: w.overlay, backup: w.backup, dump: dump.text, state: state() });
     }
@@ -732,7 +820,7 @@ async function handleApi(req, res, url) {
         const s = st.sites.find((x) => x.id === String(body.id || '').trim());
         if (s && s.enabled !== false && (!st.default || st.default.siteId === s.id)) st = sitesLib.setDefault(st, s.id, s.models[0].id);
         sitesLib.writeState(st);
-        const w = sitesLib.writeOverlay(st, { disabled: readDisabledPlugins() });
+        const w = sitesLib.writeOverlay(st, pluginState());
         return send(200, { ok: true, legacy: true, overlay: w.overlay, cleanedLines: 0, state: state() });
       } catch (e) {
         return send(400, { error: String(e && e.message || e) });

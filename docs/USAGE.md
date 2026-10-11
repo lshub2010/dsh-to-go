@@ -83,7 +83,21 @@ dsh-config.cmd
 - 离线升级：在有网机器上 `npm pack @deepseek-ai/dsh@版本` 拿到 `.tgz`，拷进 `runtime\` 后 `dsh-config.cmd → 6` 查看命令，或在槽目录里用 `--offline` 安装（依赖已缓存在 `runtime\npm-cache`）。
 - **不要跟随 `@alpha` 漂移**：dsh 处于 developer preview，明确会破坏兼容；升级请显式给版本号，并先备份。
 
-## 5. 换机器 / 换盘符
+## 8. 插件（启停 / 装卸）
+
+插件挂在**本盘的 profile**（`data\profiles\web`）上，两个槽共用。图形页「插件」分区：
+
+- **条目启停**：列出配置树里的条目，勾掉即停用（写进我们的覆盖层，**重启 dsh 生效**）。
+  停用错了条目 dsh 会**启动失败**并列出「在等某个服务」的插件——恢复就是把开关拨回来。
+- **安装 / 卸载**：按 npm 包名装卸（底层是 `dsh plugin --profile web add|remove`，交给 profile 目录里的 pnpm）。
+  便携包默认不带 pnpm：**先在页面上点一次「准备 pnpm」**（装到 `runtime\pnpm`，store 也在盘上）。
+- **版本闸门**：插件的 `peerDependencies` 与当前 dsh 不匹配会被拒绝，dsh 会打印一条「接受风险」命令；
+  页面里那个折叠的危险入口就是干这个的（可能崩、可能丢数据，想清楚再点）。
+- **发现**：dsh 没有官方插件索引。页面上可以「在 npm 里搜一搜」，但**搜索结果是 npm 包、不等于 dsh 插件**，请自行确认。
+
+
+
+## 9. 换机器 / 换盘符
 
 - 所有路径都由 `%~dp0` 推导 → **F: 换成 G:/E:/X: 都能跑**（已用 `subst X:` 实测：`X:\dsh-cli.cmd --version` 正常，`DSH_HOME=X:\data`）。
 - 数据层、npm 缓存、密钥都在盘上，插到新机器不用重装任何东西。

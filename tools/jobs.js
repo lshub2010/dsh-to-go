@@ -149,6 +149,12 @@ const KINDS = {
     },
     validate: (o) => (Array.isArray(o.args) && o.args.length ? null : '缺少 pnpm 参数'),
   },
+  // 把 pnpm 装到盘上（dsh plugin 靠 PATH 找它；便携包本身不带）
+  'pnpm-setup': {
+    label: () => '准备 pnpm（插件装/卸要用）',
+    cmd: () => [nodeExe(), path.join(__dirname, 'plugins.js'), 'setup-pnpm'],
+    validate: () => null,
+  },
   custom: {
     label: (o) => o.label || '自定义任务',
     cmd: (o) => o.cmd,
@@ -359,13 +365,17 @@ function runJob(id) {
 
   let child;
   try {
+    // 插件的装/卸是交给 profile 目录里的 pnpm 做的（dsh plugin 只转发参数），
+    // 所以这里必须把盘上自带的 pnpm 放进 PATH，并把 store 落在盘上。
+    const baseEnv = Object.assign({}, process.env, {
+      DSH_HOME: DATA,
+      DSH_AGENTS_HOME: path.join(DATA, 'agents'),
+      npm_config_cache: path.join(RUNTIME, 'npm-cache'),
+    });
+    const env = meta.kind === 'plugin-pnpm' ? require('./plugins.js').pnpmEnv(baseEnv) : baseEnv;
     child = spawn(cmd[0], cmd.slice(1), {
       cwd: ROOT,
-      env: Object.assign({}, process.env, {
-        DSH_HOME: DATA,
-        DSH_AGENTS_HOME: path.join(DATA, 'agents'),
-        npm_config_cache: path.join(RUNTIME, 'npm-cache'),
-      }),
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });

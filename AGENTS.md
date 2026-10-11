@@ -94,11 +94,34 @@ runtime\node\node.exe --test tests\sites.test.js tests\secret.test.js tests\laun
 
 ## 7. 还没做的
 
-- **插件页**：按 profile 列条目 + 停用/启用（写 `disabled` 覆盖）+ 安装/卸载。页面现在如实标注「尚未接通」——**不要放假的能点按钮**。`/api/sites` 已经带回 `disabledPlugins`，字段口子留好了。
-- 把较重的端到端验收脚本（页面接口 + 运行期 DOM 桩检查）整理进仓库（目前是外部一次性脚本）。
+- 把较重的端到端验收脚本（页面接口 + 运行期 DOM 桩检查 + 插件页的运行时验证）整理进仓库（目前是外部一次性脚本）。
 - 上游 dsh 仍是 developer preview：版本之间可能不兼容，所以才有 A/B 双槽；升级流程永远是「装空闲槽 → 校验 → 才切指针」。
+- 插件「发现」这一环只能靠 npm 关键词搜索 + 用户自己判断（dsh 没有官方索引；npm 上的 dsh 相关包多数是 dsh 本体的内部包，而不是可独立安装的插件）。
 
-## 8. 提交约定
+## 8. 插件（启停 / 安装 / 卸载）
+
+插件挂在**本盘的 profile**（`data\profiles\web`）上，不是按 A/B 槽分——两个槽共用同一个 profile。图形页「插件」分区做三件事：
+
+- **条目启停**：列出 dsh 配置树里的插件条目（含官方默认停用的、官方按条件控制的），勾掉即停用。状态写在我们的覆盖层里（`data\site-patch.yml`，随 `--patch` 传给 dsh），**重启 dsh 生效**。
+  - ⚠️ 停用错了条目 dsh 会**启动失败**并列出「等待某个服务的插件」（例如停用 `webserver` 会让 web-runtime 等 4 个插件起不来）。页面会提示这一点。
+  - ⚠️ `dsh --dump-config` **不体现**覆盖层里的 `disabled` —— 想确认停用是否生效，要看 dsh 的启动输出，别拿 dump 当证据。
+- **安装 / 卸载**：按 npm 包名装卸，实际执行 `dsh plugin --profile web add|remove <包名>`（它把参数转给 profile 目录里的 pnpm）。
+  - **需要 pnpm**：便携包默认不带。页面上点一次「准备 pnpm」就会装到本盘（`runtime\pnpm`，约几 MB，需要联网；store 也落在盘上，不碰宿主）。
+  - **版本闸门**：插件的 `peerDependencies` 与当前 dsh 版本不匹配时 dsh 直接拒绝安装，并打印一条「接受风险」的命令。想装就得显式豁免（页面「插件」分区里那个折叠起来的危险入口）；dsh 的警告是认真的——可能崩、可能丢数据。
+  - **发现**：dsh 没有官方插件索引，npm 上也不带统一标记。页面提供「在 npm 里搜一搜」，搜到后**请自行确认**这个包是不是 dsh 插件。
+
+命令行等价物（不用图形页时）：
+
+```bat
+runtime\node\node.exe tools\plugins.js list        :: 列条目（跑一遍 dump，几秒）
+runtime\node\node.exe tools\plugins.js installed   :: 列出已装的插件包
+runtime\node\node.exe tools\plugins.js search dsh  :: 在 npm 里按关键词搜
+runtime\node\node.exe tools\plugins.js setup-pnpm  :: 把 pnpm 装到本盘
+```
+
+
+
+## 9. 提交约定
 
 - 默认分支 `main`，个人开源项目，改动可直接提交 `main`（不需要 PR 流程）。
 - 提交信息写清「改了什么 + 为什么 + 怎么验的」；行为变更同步更新 `docs/ROADMAP.md` 的记录表。

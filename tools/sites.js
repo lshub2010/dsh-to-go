@@ -247,6 +247,12 @@ function buildOverlay(state, opts) {
     L.push('- id: ' + yamlScalar(id));
     L.push('  disabled: true');
   }
+  // 显式启用：官方默认停用的条目要重新开，必须写 disabled: false（只删掉我们的停用项是不够的）
+  const off = new Set((o.disabled || []).map(String));
+  for (const id of (o.enabled || []).slice().filter((x) => reserved.indexOf(x) < 0 && !off.has(String(x))).sort()) {
+    L.push('- id: ' + yamlScalar(id));
+    L.push('  disabled: false');
+  }
   return L.join('\n') + '\n';
 }
 

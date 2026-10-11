@@ -221,6 +221,30 @@ dsh 当场报 `ValidationError: $.providers.<站点>.models[0].contextWindow exp
 
 
 
+## 4.9 第五棒：插件页（棒 7）
+
+**先查清事实，再写代码**——这一棒花了大量时间在只读勘察上，因为 dsh 的插件机制没有任何官方文档页，也没有插件索引：
+
+| 查到的 | 依据 |
+|---|---|
+| 插件 = **profile 目录**里的 npm 包 + 配置树条目；profile 在 `data\profiles\<名>`（`package.json` 的 `dsh.profile.bundles` 决定哪些包会加载） | `data\profiles\web\` 实际结构；`dsh --profile web --help` |
+| 装/卸 = `dsh plugin --profile <名> add\|remove <包>`，它把参数**原样转给 profile 目录里的 pnpm** | `dsh plugin --help`；`lib/plugin-*.js` 源码 |
+| **需要 pnpm**，便携包不带 → 必须把 pnpm 装到盘上（`runtime\pnpm`），并在启动子进程时把它的 bin 放进 PATH；store 也要落在盘上（否则默认写盘根或宿主） | dsh 报「pnpm was not found; install pnpm and make it available on PATH」；`pnpm store path` 实测 |
+| 装/卸有**版本兼容闸门**：插件的 `peerDependencies` 与当前 dsh 不匹配直接拒绝，并给出 `allow-version ... --accept-risk` 豁免命令 | 实测 `add @deepseek-ai/dsh-tool-todo`：npm 上最新只有 0.0.1-rc.1，与 dsh 0.2.1-alpha.2 不匹配 → rejected |
+| 条目启停 = 覆盖层里写 `- id: <条目id>` + `disabled: true`，**运行时生效** | 实测停用 `webserver` → dsh 启动失败：`1 required plugin did not activate`，并列出 4 个等待 `webServer` 的插件 |
+| ⚠️ **`dsh --dump-config` 不体现覆盖层给的 `disabled`** | 同一份配置，带不带停用补丁的 dump **逐字节相同**（我先被它骗了两次，其中一次是 grep 窗口太窄把条目末尾的 `disabled` 切掉了） |
+| 官方自己也是这么写的 | `@deepseek-ai/dsh-plugin-manager` 的 `writePluginEnabled()`：找同 id 的项改 `disabled`，没找到就 append `{id, disabled}` |
+
+交付：
+- `tools/plugins.js`：启停状态（`data\plugins.json`，`disabled`/`enabled` 两个清单）、条目解析（只认行首 `- id:`，缩进的是 config 里的引用）、已装包、pnpm 探测/环境/安装、包名校验、npm 关键词搜索。
+- `jobs.js`：`plugin-pnpm` 任务注入 pnpm 环境（PATH + 盘上 store）；新增 `pnpm-setup` 任务。
+- `ui-server.js`：`/api/plugins`（清单，dump 缓存 30 秒）、`/api/plugins/toggle`、`/api/plugins/install|uninstall`、`/api/plugins/allow-version`、`/api/plugins/search`、`/api/plugins/pnpm-setup`；写操作要解锁、dsh 运行时 409。
+- 页面「插件」分区：状态卡（pnpm / profile / 已装包 / dsh 状态 / 条目数）+ 已装包表格（卸载）+ 安装（包名 + npm 搜索点选）+ 危险区（版本豁免）+ 条目表格（搜索过滤 + 开关）+ 操作日志。
+
+验收：单测 **64/64**（新增 7 条插件用例）；插件 e2e **26/26**（含真跑 `dsh plugin` 与「停用 → 启动失败」的运行时验证）；页面运行期核查 **51/51**；页面静态核查 5/5；统一页面 e2e 无回归。
+
+
+
 ## 5. 视觉基线（ui-ux-pro-max 输出，实际采用部分）
 
 - 风格：Dark Mode (OLED)，深色优先；浅色不做默认。

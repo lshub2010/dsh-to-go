@@ -383,10 +383,66 @@ label.switch input:checked ~ .txt{color:var(--accent)}
   <!-- ============================================ 插件 -->
   <section id="tab-plugins" role="tabpanel" hidden>
     <div class="card">
-      <h2>插件维护</h2>
-      <p class="sub">dsh 的插件挂在 <b>profile</b>（<code>data\profiles\web</code>）上，不是按 A/B 槽分；两槽共用同一个 profile。
-        这一页会在下一步接通：列出插件条目、停用/启用（写 <code>disabled</code> 覆盖）、安装/卸载第三方插件。</p>
-      <div class="flash on warn">尚未接通 —— 为避免给你一个「看起来能用其实不生效」的界面，这里先留空。</div>
+      <h2>插件维护（未运行状态下进行）</h2>
+      <p class="sub">dsh 的插件挂在本盘的 <b>profile</b>（<code>data\profiles\web</code>）上：条目启停写在我们的覆盖层里
+        （作为 <code>--patch</code> 传给 dsh），装/卸交给 profile 目录里的 <b>pnpm</b>。
+        <b>dsh 运行时不能改</b>（会改启动配置），运行中这些按钮会被拒绝。</p>
+      <div class="grid" id="plug-status"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn" id="btn-plug-refresh">刷新</button>
+        <button class="btn primary" id="btn-pnpm-setup">准备 pnpm</button>
+        <span class="sub" id="plug-pnpm-note"></span>
+      </div>
+      <div class="flash" id="plug-out"></div>
+    </div>
+
+    <div class="card">
+      <h2>已装的插件包</h2>
+      <p class="sub">这就是 profile 的 <code>package.json</code>：装了的包会被 pnpm 管理，<b>勾选「加载」</b>的才会进入插件树。</p>
+      <div id="plug-installed" class="sub">加载中…</div>
+    </div>
+
+    <div class="card">
+      <h2>安装 / 卸载</h2>
+      <p class="sub">dsh <b>没有官方的插件索引</b>，所以这里按 npm 包名来装。找包可以先在下面的搜索框里按关键词搜 npm，
+        再自行确认它是不是 dsh 插件（版本不匹配时 dsh 会拒绝安装，日志里会给出一条「接受风险」的命令）。</p>
+      <div class="row">
+        <div class="f"><label for="plug-name">npm 包名</label><input id="plug-name" placeholder="@scope/name 或 name" class="mono"></div>
+        <button class="btn primary" id="btn-plug-install">安装</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <div class="f"><label for="plug-q">在 npm 里搜一搜（关键词）</label><input id="plug-q" placeholder="例如 dsh tool / 作者名 / 包名片段"></div>
+        <button class="btn" id="btn-plug-search">搜索</button>
+      </div>
+      <div id="plug-search" class="sub" style="margin-top:6px">（搜索结果会列在这里，点一行就能填进上面的包名框）</div>
+
+      <details style="margin-top:12px">
+        <summary class="sub">版本不匹配时：接受风险并安装（危险，dsh 会警告可能崩溃/丢数据）</summary>
+        <div class="row" style="margin-top:8px">
+          <div class="f"><label for="plug-av-spec">包名@版本（照抄 dsh 日志里给出的那一行）</label><input id="plug-av-spec" class="mono" placeholder="@scope/name@1.2.3"></div>
+          <div class="f"><label for="plug-av-ver">dsh 版本</label><input id="plug-av-ver" class="mono" placeholder="0.2.1-alpha.2"></div>
+          <button class="btn danger" id="btn-plug-allow">接受风险</button>
+        </div>
+        <div class="flash" id="plug-av-out"></div>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>条目启停</h2>
+      <p class="sub">勾掉（停用）后重启 dsh 生效。注意：<b>停用错了条目 dsh 会启动失败</b>（报「Plugins waiting for services」），
+        页面上标了「官方条件控制」的条目本来由 dsh 自己按条件决定，手动改可能被它覆盖。</p>
+      <div class="row">
+        <div class="f"><label for="plug-filter">过滤（按条目 id 或包名）</label><input id="plug-filter" placeholder="例如 tool / llm"></div>
+        <span class="sub" id="plug-count"></span>
+      </div>
+      <div id="plug-entries" class="sub" style="margin-top:8px">加载中…</div>
+      <div class="flash" id="plug-toggle-out"></div>
+    </div>
+
+    <div class="card">
+      <h2>操作日志</h2>
+      <div class="grid" id="plug-job"></div>
+      <pre id="plug-log">（还没有插件操作）</pre>
     </div>
   </section>
 </main>
@@ -420,6 +476,9 @@ const el = (id) => document.getElementById(id);
 let STATE = null;
 let CURRENT_JOB = null;
 let LOG_OFFSET = 0;
+let CUR_LOG = 'job-log';
+let CUR_GRID = 'job-state';
+let CUR_OUT = 'job-out';
 let POLL = null;
 
 /* ---------------------------------------------------------------- 基础请求 */
@@ -458,6 +517,8 @@ document.querySelectorAll('nav button[role=tab]').forEach((b) => {
   b.addEventListener('click', () => {
     document.querySelectorAll('nav button[role=tab]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
     document.querySelectorAll('main section').forEach((s) => { s.hidden = (s.id !== 'tab-' + b.dataset.tab); });
+    // 插件页的条目清单要跑一遍 dsh --dump-config（慢），所以按需加载
+    if (b.dataset.tab === 'plugins' && !PLUG) loadPlugins();
   });
 });
 function goTab(name) {
@@ -533,9 +594,10 @@ function statusPill(st) {
   return '<span class="pill ' + m[0] + '">' + m[1] + '</span>';
 }
 
-function renderJob(j) {
-  if (!j) { rows('job-state', [['当前任务', '（无）']]); return; }
-  rows('job-state', [
+function renderJob(j, gridId) {
+  const g = gridId || 'job-state';
+  if (!j) { rows(g, [['当前任务', '（无）']]); return; }
+  rows(g, [
     ['任务', esc(j.label)],
     ['状态', statusPill(j.status) + ' ' + esc(j.message || '')],
     ['阶段', esc(j.stage || '—')],
@@ -939,14 +1001,19 @@ async function pollJob() {
     const s = await api('/api/jobs');
     const run = s.running;
     if (run) {
-      if (!CURRENT_JOB || CURRENT_JOB !== run.id) { CURRENT_JOB = run.id; LOG_OFFSET = 0; el('job-log').textContent = ''; }
-      renderJob(run);
+      if (!CURRENT_JOB || CURRENT_JOB !== run.id) {
+        CURRENT_JOB = run.id; LOG_OFFSET = 0;
+        const pre = el(CUR_LOG || 'job-log');
+        if (pre) pre.textContent = '';
+      }
+      renderJob(run, CUR_GRID || 'job-state');
     } else if (CURRENT_JOB) {
       const mine = (s.jobs || []).find((j) => j.id === CURRENT_JOB);
-      if (mine) renderJob(mine);
+      if (mine) renderJob(mine, CUR_GRID || 'job-state');
       stopPolling();
-      flash('job-out', '任务结束：' + (mine ? (mine.status + '　' + (mine.message || '')) : '—'), mine && mine.status === 'done' ? 'ok' : 'warn');
+      flash(CUR_OUT || 'job-out', '任务结束：' + (mine ? (mine.status + '　' + (mine.message || '')) : '—'), mine && mine.status === 'done' ? 'ok' : 'warn');
       await refresh();
+      if (PLUG) loadPlugins(true).catch(() => {});
       return;
     }
     if (CURRENT_JOB) await pullLog();
@@ -954,29 +1021,36 @@ async function pollJob() {
 }
 async function pullLog() {
   if (!CURRENT_JOB) return;
+  const pre = el(CUR_LOG || 'job-log');
+  if (!pre) return;
   const r = await api('/api/jobs/log?id=' + encodeURIComponent(CURRENT_JOB) + '&from=' + LOG_OFFSET, undefined, 'GET');
   if (r && r.text) {
-    if (r.reset) { el('job-log').textContent = ''; }
-    const pre = el('job-log');
+    if (r.reset) { pre.textContent = ''; }
     pre.textContent = (pre.textContent === '（还没有任务）' ? '' : pre.textContent) + r.text;
     pre.scrollTop = pre.scrollHeight;
     LOG_OFFSET = r.next;
   }
 }
-async function runJob(path, body, btn, label) {
-  clearFlash('job-out');
+async function runJob(path, body, btn, label, opts) {
+  const o = opts || {};
+  CUR_LOG = o.log || 'job-log';
+  CUR_GRID = o.jobGrid || 'job-state';
+  const outId = o.out || 'job-out';
+  CUR_OUT = outId;
+  clearFlash(outId);
   try {
     const r = await withBusy(btn, label, () => api(path, body));
     CURRENT_JOB = r.job && r.job.id;
     LOG_OFFSET = 0;
-    el('job-log').textContent = '';
-    renderJob(r.job);
-    flash('job-out', '任务已开始：' + r.job.label + '（可切到别的标签页，任务在后台继续）', 'ok');
-    goTab('upgrade');
+    const pre = el(CUR_LOG);
+    if (pre) pre.textContent = '';
+    renderJob(r.job, o.jobGrid || 'job-state');
+    flash(outId, '任务已开始：' + r.job.label + (o.keepTab ? '（日志在下面刷新）' : '（可切到别的标签页，任务在后台继续）'), 'ok');
+    if (!o.keepTab) goTab('upgrade');
     startPolling();
     await pullLog();
   } catch (e) {
-    flash('job-out', '无法开始任务：' + e.message, 'err');
+    flash(outId, '无法开始任务：' + e.message, 'err');
   }
 }
 /* ---- 版本列表：从 npm 官方源取，界面只让用户点选 ---- */
@@ -1130,6 +1204,129 @@ el('btn-temp').addEventListener('click', async () => {
     flash('temp-out', '已保存。' + (el('t-usb').checked ? '（盘上临时目录可能让 workspace-write 失败，请确认这块盘给足 WRITE_OWNER）' : ''), 'ok');
     await refresh();
   } catch (e) { flash('temp-out', '保存失败：' + e.message, 'err'); }
+});
+
+/* ---------------------------------------------------------------- 插件 */
+let PLUG = null;          // 最近一次 /api/plugins 的结果
+let PLUG_FILTER = '';
+
+async function loadPlugins(force) {
+  try {
+    PLUG = await api('/api/plugins' + (force ? '?force=1' : ''), undefined, 'GET');
+    renderPlugins();
+  } catch (e) {
+    flash('plug-out', '读插件清单失败：' + e.message, 'err');
+  }
+}
+
+function renderPlugins() {
+  const r = PLUG;
+  if (!r) return;
+  const pn = r.pnpm || {};
+  const inst = (r.installed && r.installed.installed) || [];
+  rows('plug-status', [
+    ['pnpm（装卸插件要用）', pn.ok
+      ? '<span class="pill ok">就绪</span> v' + esc(pn.version) + '　<span class="sub mono">' + esc(pn.dir) + '</span>'
+      : '<span class="pill warn">未就绪</span> <span class="sub">' + esc(pn.hint || '') + '</span>'],
+    ['profile 目录', '<span class="mono sub">' + esc((r.installed && r.installed.dir) || '') + '</span>'],
+    ['额外安装的包', inst.length + ' 个' + (inst.length ? '（' + esc(inst.map((x) => x.name).join('、')) + '）' : '')],
+    ['dsh 状态', r.dshRunning
+      ? '<span class="pill bad">运行中：请先停止，插件改动会被拒</span>'
+      : '<span class="pill ok">已停止（可以改）</span>'],
+    ['插件条目', (r.entries || []).length + ' 个　<span class="sub">（清单读自 dsh --dump-config，缓存 30 秒）</span>'],
+  ]);
+  el('plug-pnpm-note').textContent = pn.ok ? '盘上自带（不依赖宿主装没装）' : '点「准备 pnpm」装到本盘上（约几 MB）';
+  el('btn-pnpm-setup').disabled = !!pn.ok || !!r.dshRunning;
+
+  el('plug-installed').innerHTML = inst.length
+    ? '<table class="mtable"><thead><tr><th>包</th><th>版本</th><th>会加载</th><th></th></tr></thead><tbody>' + inst.map((x) =>
+      '<tr><td class="mono">' + esc(x.name) + '</td><td>' + esc(x.version) + '</td><td>' +
+      (x.bundle ? '<span class="pill ok">是</span>' : '<span class="sub">否</span>') +
+      '</td><td><button class="btn danger" data-uninstall="' + esc(x.name) + '">卸载</button></td></tr>').join('')
+      + '</tbody></table>'
+    : '<span class="sub">（没有额外安装的包：dsh 自带的插件随槽位走，不在这里）</span>';
+  el('plug-installed').querySelectorAll('button[data-uninstall]').forEach((b) =>
+    b.addEventListener('click', () => pluginUninstall(b.dataset.uninstall)));
+
+  const f = PLUG_FILTER.toLowerCase();
+  const all = r.entries || [];
+  const list = all.filter((e) => !f || e.id.toLowerCase().indexOf(f) >= 0 || String(e.name || '').toLowerCase().indexOf(f) >= 0);
+  el('plug-count').textContent = '显示 ' + list.length + ' / ' + all.length + ' 个'
+    + (r.disabled && r.disabled.length ? '；本工具停用 ' + r.disabled.length + ' 个' : '');
+  el('plug-entries').innerHTML = list.length
+    ? '<table class="mtable"><thead><tr><th>条目</th><th>包</th><th>状态</th><th>启用</th></tr></thead><tbody>' + list.map((e) =>
+      '<tr><td class="mono">' + esc(e.id) + '</td><td class="mono sub">' + esc(e.name || '—') + '</td><td>' +
+      (e.effective ? '<span class="pill ok">启用</span>' : '<span class="pill warn">停用</span>') +
+      (e.ours === 'disabled' ? '<span class="tag">本工具停用</span>' : '') +
+      (e.ours === 'enabled' ? '<span class="tag">本工具启用</span>' : '') +
+      (e.shippedDisabled ? '<span class="tag">官方默认停用</span>' : '') +
+      (e.conditional ? '<span class="tag">官方条件控制</span>' : '') +
+      '</td><td><label class="switch"><input type="checkbox" role="switch" data-toggle="' + esc(e.id) + '"' +
+      (e.effective ? ' checked' : '') + (r.dshRunning ? ' disabled' : '') + '><span class="track"></span></label></td></tr>').join('')
+      + '</tbody></table>'
+    : '<span class="sub">（没有匹配的条目）</span>';
+  el('plug-entries').querySelectorAll('input[data-toggle]').forEach((cb) =>
+    cb.addEventListener('change', () => pluginToggle(cb.dataset.toggle, !cb.checked)));
+  el('plug-log').textContent = el('plug-log').textContent || '（还没有插件操作）';
+}
+
+async function pluginToggle(id, disabled) {
+  clearFlash('plug-toggle-out');
+  try {
+    const r = await api('/api/plugins/toggle', { id, disabled });
+    flash('plug-toggle-out', (disabled ? '已停用 ' : '已启用 ') + id + '。' + (r.note || ''), 'ok');
+    await loadPlugins(true);
+    await refresh();
+  } catch (e) {
+    flash('plug-toggle-out', '改动失败：' + e.message, 'err');
+    await loadPlugins(true);
+  }
+}
+function pluginInstall() {
+  const name = el('plug-name').value.trim();
+  if (!name) { flash('plug-out', '先填要装的 npm 包名（也可以先用下面的搜索找包）。', 'err'); return; }
+  runJob('/api/plugins/install', { name }, el('btn-plug-install'), '安装中…',
+    { keepTab: true, log: 'plug-log', out: 'plug-out', jobGrid: 'plug-job' });
+}
+function pluginUninstall(name) {
+  if (!window.confirm('卸载插件 ' + name + '？（会从 profile 的依赖里移除）')) return;
+  runJob('/api/plugins/uninstall', { name }, el('btn-plug-refresh'), '卸载中…',
+    { keepTab: true, log: 'plug-log', out: 'plug-out', jobGrid: 'plug-job' });
+}
+async function pluginSearch() {
+  const q = el('plug-q').value.trim();
+  if (!q) { flash('plug-out', '请填搜索关键词。', 'err'); return; }
+  el('plug-search').innerHTML = '<span class="sub">搜索中…</span>';
+  try {
+    const r = await api('/api/plugins/search?q=' + encodeURIComponent(q), undefined, 'GET');
+    if (!r.ok) { el('plug-search').innerHTML = '<span class="sub">搜不到：' + esc(r.error) + '</span>'; return; }
+    el('plug-search').innerHTML = '<div class="sub" style="margin-bottom:4px">npm 上匹配「' + esc(r.query) + '」的 ' + r.count + '/' + r.total
+      + ' 个（<b>这不是插件官方索引</b>，请自行确认是 dsh 插件）：</div>' +
+      '<table class="mtable"><tbody>' + r.results.map((x) =>
+        '<tr data-pick="' + esc(x.name) + '"><td class="mono">' + esc(x.name) + '@' + esc(x.version) + '</td><td class="sub">' +
+        esc(x.description || '') + (x.isDshPlugin ? ' <span class="tag">名字里有 dsh</span>' : '') + '</td></tr>').join('')
+      + '</tbody></table>';
+    el('plug-search').querySelectorAll('tr[data-pick]').forEach((tr) =>
+      tr.addEventListener('click', () => { el('plug-name').value = tr.dataset.pick; flash('plug-out', '已填入包名：' + tr.dataset.pick, 'ok'); }));
+  } catch (e) {
+    el('plug-search').innerHTML = '<span class="sub">搜索失败：' + esc(e.message) + '</span>';
+  }
+}
+el('btn-plug-refresh').addEventListener('click', (e) => withBusy(e.currentTarget, '读取中…', () => loadPlugins(true)));
+el('btn-pnpm-setup').addEventListener('click', () => runJob('/api/plugins/pnpm-setup', {}, el('btn-pnpm-setup'), '准备中…',
+  { keepTab: true, log: 'plug-log', out: 'plug-out', jobGrid: 'plug-job' }));
+el('btn-plug-install').addEventListener('click', pluginInstall);
+el('btn-plug-search').addEventListener('click', pluginSearch);
+el('plug-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') pluginSearch(); });
+el('plug-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') pluginInstall(); });
+el('plug-filter').addEventListener('input', () => { PLUG_FILTER = el('plug-filter').value; renderPlugins(); });
+el('btn-plug-allow').addEventListener('click', (e) => {
+  const spec = el('plug-av-spec').value.trim(), ver = el('plug-av-ver').value.trim();
+  clearFlash('plug-av-out');
+  if (!spec || !ver) { flash('plug-av-out', '要填「包名@版本」和 dsh 版本（dsh 日志里会给出一整行）。', 'err'); return; }
+  if (!window.confirm('接受风险：dsh 会警告这个插件可能与当前版本不兼容（可能崩溃/丢数据）。确定继续？')) return;
+  runJob('/api/plugins/allow-version', { spec, dshVersion: ver }, e.currentTarget, '豁免中…',
+    { keepTab: true, log: 'plug-log', out: 'plug-av-out', jobGrid: 'plug-job' });
 });
 
 /* ---------------------------------------------------------------- 启动 */
