@@ -81,6 +81,122 @@ function portListening(port) {
   portCache = { at: now, port, value };
   return value;
 }
+// ------------------------------------------------------------------ 版本列表
+// 版本号比较：先比数字段，再比预发布段（alpha.10 > alpha.9，正式版 > 预发布版）。
+function cmpVersion(a, b) {
+  const [ca, pa] = String(a).split('-');
+  const [cb, pb] = String(b).split('-');
+  const na = ca.split('.').map(Number);
+  const nb = cb.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const x = na[i] || 0, y = nb[i] || 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  if (!pa && !pb) return 0;
+  if (!pa) return 1;    // 有预发布后缀的更小
+  if (!pb) return -1;
+  const sa = pa.split('.'), sb = pb.split('.');
+  for (let i = 0; i < Math.max(sa.length, sb.length); i++) {
+    const x = sa[i], y = sb[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const nx = Number(x), ny = Number(y);
+    const bothNum = !Number.isNaN(nx) && !Number.isNaN(ny);
+    if (bothNum) { if (nx !== ny) return nx > ny ? 1 : -1; }
+    else if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
+
+let VERSIONS_CACHE = { at: 0, data: null };
+/** 从 npm 官方源取 dsh 的版本列表（失败自动换 npmmirror；5 分钟内复用缓存）。 */
+async function fetchVersions(force) {
+  const now = Date.now();
+  if (!force && VERSIONS_CACHE.data && (now - VERSIONS_CACHE.at) < 5 * 60 * 1000) return VERSIONS_CACHE.data;
+  const sources = [
+    ['npmjs 官方源', 'https://registry.npmjs.org/@deepseek-ai/dsh'],
+    ['npmmirror 镜像', 'https://registry.npmmirror.com/@deepseek-ai/dsh'],
+  ];
+  let lastErr = '';
+  for (const [label, u] of sources) {
+    try {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 12000);
+      let res;
+      try {
+        res = await fetch(u, { headers: { Accept: 'application/json' }, signal: ac.signal });
+      } finally { clearTimeout(timer); }
+      if (!res.ok) { lastErr = label + ' HTTP ' + res.status; continue; }
+      const j = await res.json();
+      const all = Object.keys(j.versions || {});
+      if (!all.length) { lastErr = label + ' 没有返回版本信息'; continue; }
+      const tags = j['dist-tags'] || {};
+      const versions = all.map((v) => ({
+        version: v,
+        tags: Object.keys(tags).filter((k) => tags[k] === v).sort(),
+        published: (j.time && j.time[v]) || null,
+      })).sort((a, b) => cmpVersion(b.version, a.version));
+      const data = {
+        ok: true, source: label, tags, count: all.length, versions,
+        installed: { 'agent-A': dshVersion('agent-A'), 'agent-B': dshVersion('agent-B') },
+        active: slotName(),
+      };
+      VERSIONS_CACHE = { at: now, data };
+      return data;
+    } catch (e) {
+      lastErr = label + ' ' + ((e && e.name === 'AbortError') ? '超时' : String((e && e.message) || e));
+    }
+  }
+  return { ok: false, error: '取不到版本列表（' + lastErr + '）' };
+}
+
+/**
+ * 目录体积：要遍历整棵树（两个槽 + npm 缓存 = 上万个文件），慢盘上要好几秒。
+ * 这个值只用于界面展示、变化又慢，所以缓存 60 秒——否则每次刷新/每个动作后
+ * 页面都会卡一下（实测冷算 2.8 秒，U 盘上更久）。
+ */
+const SIZE_CACHE = new Map();
+const SIZE_PENDING = new Set();
+const SIZE_FILE = path.join(RUNTIME, 'sizes.json');
+let SIZE_DISK = null;
+function loadSizeDisk() {
+  if (SIZE_DISK) return SIZE_DISK;
+  try { SIZE_DISK = JSON.parse(fs.readFileSync(SIZE_FILE, 'utf8')); } catch (e) { SIZE_DISK = {}; }
+  return SIZE_DISK;
+}
+function saveSizeDisk() {
+  try {
+    fs.mkdirSync(RUNTIME, { recursive: true });
+    fs.writeFileSync(SIZE_FILE, JSON.stringify(SIZE_DISK), 'utf8');
+  } catch (e) { /* 只读介质就算了，不影响功能 */ }
+}
+function dirSizeCached(p) {
+  const now = Date.now();
+  const hit = SIZE_CACHE.get(p);
+  if (hit && (now - hit.at) < 60000) return hit.value;
+  const disk = loadSizeDisk()[p];
+  if (disk && Number.isFinite(disk.value)) {
+    // 盘上有上次的结果：先立刻返回（首次打开页面不用等），再在后台重算一遍
+    if (!SIZE_PENDING.has(p)) {
+      SIZE_PENDING.add(p);
+      setTimeout(() => {
+        try {
+          const v = dirSize(p);
+          SIZE_CACHE.set(p, { at: Date.now(), value: v });
+          SIZE_DISK[p] = { at: Date.now(), value: v };
+          saveSizeDisk();
+        } catch (e) { /* 忽略：下次仍用旧值 */ }
+        SIZE_PENDING.delete(p);
+      }, 50);
+    }
+    return disk.value;
+  }
+  const value = dirSize(p);
+  SIZE_CACHE.set(p, { at: now, value });
+  SIZE_DISK[p] = { at: now, value };
+  saveSizeDisk();
+  return value;
+}
 /** dsh 是否在跑：优先看我们自己起的子进程，其次看端口是否有人监听。 */
 function dshStatus() {
   const info = readDshInfo() || {};
@@ -244,9 +360,9 @@ function state() {
       ? 'runtime\\tmp（在 U 盘上 · ACL 沙箱可能失败）'
       : ((process.env.LOCALAPPDATA || 'C:\\Windows') + '\\Temp（宿主，推荐）'),
     sizes: {
-      runtime: human(dirSize(RUNTIME)),
-      data: human(dirSize(DATA)),
-      cache: human(dirSize(path.join(RUNTIME, 'npm-cache'))),
+      runtime: human(dirSizeCached(RUNTIME)),
+      data: human(dirSizeCached(DATA)),
+      cache: human(dirSizeCached(path.join(RUNTIME, 'npm-cache'))),
       free: freeSpace() >= 0 ? human(freeSpace()) : 'unknown',
     },
     lastUpgradeLines: tail(VERSION_FILE, 40).split('\n').filter((l) => l.includes('registry=')).slice(-3),
@@ -298,6 +414,9 @@ async function handleApi(req, res, url) {
       const key = String(body.key || '');
       if (!pass) return send(400, { error: '口令不能为空（请先解锁）' });
       if (!key) return send(400, { error: '密钥不能为空' });
+      // 前端用「星号按长度填充」提示已有密钥；万一那份占位文本被当成真密钥提交，这里拦下来，
+      // 否则会把用户真实密钥覆盖成一串星号（覆盖前无法校验，是不可逆的）
+      if (/^\*+$/.test(key)) return send(400, { error: '这看起来是占位用的星号，不是真实密钥：留空表示不修改' });
       const sitesLib2 = require('./sites.js');
       const st = sitesLib2.readState();
       let siteId = String(body.siteId || '').trim();
@@ -498,11 +617,21 @@ async function handleApi(req, res, url) {
     if (p === '/api/sites' && req.method === 'GET') {
       const sitesLib = require('./sites.js');
       const st = sitesLib.readState();
+      let keyLengths = {};
+      try {
+        for (const k of secretLib.listKeys()) keyLengths[k.siteId] = k.length || 0;
+      } catch (e) { keyLengths = {}; }
       return send(200, {
-        sites: st.sites, default: st.default,
+        sites: st.sites, default: st.default, keyLengths,
         overlay: sitesLib.OVERLAY, overlayExists: fs.existsSync(sitesLib.OVERLAY),
         disabledPlugins: readDisabledPlugins(),
       });
+    }
+
+    // 可用版本列表：让用户从列表里选，而不是手打版本号（打错一个字符要等几分钟才发现）
+    if (p === '/api/versions' && req.method === 'GET') {
+      const v = await fetchVersions(url.searchParams.get('force') === '1');
+      return send(v.ok ? 200 : 502, v);
     }
 
     if (p === '/api/sites' && req.method === 'POST') {

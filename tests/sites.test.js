@@ -229,3 +229,57 @@ test('probeModels：超时会返回失败而不是挂住', async () => {
   assert.match(r.error, /超时/);
   await new Promise((r2) => slow.close(r2));
 });
+
+test('probeModels：/models 里带的上下文长度会被认出来（各家字段名都认）', async () => {
+  const gw = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ data: [
+      { id: 'a', context_length: 131072 }, { id: 'a' }, { id: 'b', context_window: 32000 },
+      { id: 'c', context: 'nope' }, { name: 'd' },
+    ] }));
+  });
+  await new Promise((r) => gw.listen(0, '127.0.0.1', r));
+  const r = await S.probeModels({ baseURL: 'http://127.0.0.1:' + gw.address().port, timeoutMs: 3000 });
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.models, ['a', 'b', 'c', 'd'], '重复 id 去重、name 也能当 id');
+  const byId = Object.fromEntries(r.details.map((d) => [d.id, d.contextWindow]));
+  assert.strictEqual(byId.a, 131072);
+  assert.strictEqual(byId.b, 32000);
+  assert.strictEqual(byId.c, undefined, '不是正整数就当没有');
+  await new Promise((r2) => gw.close(r2));
+});
+
+test('模型上下文：合法值进覆盖层，auto 不写，非法值当场拒绝', () => {
+  const st = S.upsert(S.emptyState(), {
+    id: 'ctx', baseURL: 'https://c/v1',
+    models: [{ id: 'm-auto' }, { id: 'm-200k', contextWindow: 200000 }, { id: 'm-image', image: true, contextWindow: 131072 }],
+  });
+  const ov = S.buildOverlay(st);
+  assert.match(ov, /contextWindow: 200000/);
+  assert.match(ov, /contextWindow: 131072/);
+  assert.match(ov, /input: \[text, image\]/, '视觉要写成 dsh 认的 input');
+  const lines = ov.split('\n');
+  const i = lines.findIndex((l) => l.includes('m-auto'));
+  assert.ok(i >= 0 && !/contextWindow/.test(lines[i + 1] || ''), 'auto 的模型后面不该紧跟 contextWindow');
+
+  // 'auto' / 空串都当 auto。dsh 的 schema 是 integer >= 1，写 0 会让整个 provider 非法——
+  // 这条已用 headless 实测：dsh 报 `contextWindow expected number >= 1 but got 0`。
+  assert.strictEqual(S.normalizeSite({ id: 'x1', baseURL: 'https://x/v1', models: [{ id: 'm', contextWindow: 'auto' }] }).models[0].contextWindow, null);
+  assert.strictEqual(S.normalizeSite({ id: 'x2', baseURL: 'https://x/v1', models: [{ id: 'm', contextWindow: '' }] }).models[0].contextWindow, null);
+  assert.strictEqual(S.normalizeSite({ id: 'x3', baseURL: 'https://x/v1', models: [{ id: 'm', contextWindow: 131072 }] }).models[0].contextWindow, 131072);
+  for (const bad of [0, -1, 1.5, 'abc']) {
+    assert.throws(() => S.normalizeSite({ id: 'x4', baseURL: 'https://x/v1', models: [{ id: 'm', contextWindow: bad }] }), /上下文/, '非法值 ' + bad + ' 应当被拒');
+  }
+});
+
+test('版本比较器（ui-server 的 cmpVersion）：预发布顺序与正式版优先', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'tools', 'ui-server.js'), 'utf8');
+  const fn = src.match(/function cmpVersion[\s\S]*?\n}/);
+  assert.ok(fn, '找不到 cmpVersion');
+  const cmpVersion = new Function('return ' + fn[0])();
+  assert.ok(cmpVersion('0.2.1-alpha.2', '0.2.1-alpha.1') > 0);
+  assert.ok(cmpVersion('0.2.1-alpha.10', '0.2.1-alpha.9') > 0, 'alpha.10 > alpha.9（不能按字符串比）');
+  assert.ok(cmpVersion('0.2.0-rc.2', '0.2.1-alpha.1') < 0, '0.2.1 线在 0.2.0 之上');
+  assert.ok(cmpVersion('0.2.0', '0.2.0-rc.2') > 0, '正式版大于预发布');
+  assert.strictEqual(cmpVersion('0.2.1-alpha.2', '0.2.1-alpha.2'), 0);
+});

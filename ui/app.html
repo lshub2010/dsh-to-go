@@ -91,6 +91,31 @@ td.mono{font-family:var(--font-mono);font-size:12.5px}
 .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--border);border-top-color:var(--accent);
   border-radius:50%;animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
+/* 模型选择器：输入框 + 箭头展开 + 边打边筛 */
+.picker-wrap{position:relative}
+.picker{display:flex;gap:6px;align-items:flex-start}
+.picker input{flex:1}
+.dd{position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:30;max-height:220px;overflow:auto;
+  background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 10px 28px rgba(0,0,0,.5)}
+.dd[hidden]{display:none}
+.dd div{padding:8px 11px;cursor:pointer;font-family:var(--font-mono);font-size:12.5px}
+.dd div:hover,.dd div.on{background:var(--primary)}
+.dd div.empty{cursor:default;color:var(--muted);font-family:var(--font-ui)}
+/* 开关（视觉） */
+label.switch{display:inline-flex;align-items:center;gap:9px;cursor:pointer;margin:0;min-height:40px;color:var(--fg)}
+label.switch input{position:absolute;opacity:0;width:0;height:0}
+label.switch .track{width:44px;height:24px;border-radius:999px;background:var(--secondary);position:relative;
+  transition:background .18s;flex:0 0 auto}
+label.switch .track::after{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
+  background:var(--fg);transition:transform .18s}
+label.switch input:checked + .track{background:var(--accent)}
+label.switch input:checked + .track::after{transform:translateX(20px)}
+label.switch input:focus-visible + .track{outline:2px solid var(--accent);outline-offset:2px}
+label.switch .txt{color:var(--muted);font-size:12.5px}
+label.switch input:checked ~ .txt{color:var(--accent)}
+.mtable{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+.mtable th,.mtable td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:left}
+.mtable td.mono{font-family:var(--font-mono);font-size:12.5px}
 @media (prefers-reduced-motion: reduce){*{animation:none !important;transition:none !important}}
 @media (max-width:640px){.grid{grid-template-columns:1fr}.grid > div:nth-child(odd){margin-top:8px}header{padding:12px 14px}main{padding:14px 14px 60px}}
 </style>
@@ -120,6 +145,23 @@ td.mono{font-family:var(--font-mono);font-size:12.5px}
 <main>
   <!-- ============================================ 概览 -->
   <section id="tab-overview" role="tabpanel">
+    <div class="card" id="wizard" hidden>
+      <h2>首次使用引导</h2>
+      <p class="sub">三步走完就能用，版本从列表里选（不用记版本号）。</p>
+      <div class="steps" id="wz-steps">
+        <span data-w="1">1 站点与密钥</span>
+        <span data-w="2">2 选择版本安装</span>
+        <span data-w="3">3 启动 dsh</span>
+      </div>
+      <div class="row">
+        <div class="f"><label for="wz-ver">要安装的版本</label><select id="wz-ver"></select></div>
+        <button class="btn primary" id="btn-wz-install">安装到空闲槽</button>
+        <button class="btn" id="btn-wz-site">去配站点与密钥</button>
+      </div>
+      <div class="sub" id="wz-note" style="margin-top:6px"></div>
+      <div class="flash" id="wz-out"></div>
+    </div>
+
     <div class="card">
       <h2>dsh 状态</h2>
       <div class="grid" id="ov-dsh"></div>
@@ -189,7 +231,7 @@ td.mono{font-family:var(--font-mono);font-size:12.5px}
       </div>
       <div class="row">
         <div class="f"><label for="s-keyenv">密钥变量名（默认按站点 ID 生成）</label><input id="s-keyenv" placeholder="MY_RELAY_API_KEY"></div>
-        <div class="f"><label for="s-key">API 密钥（只走本地请求，进程内加密，不落明文）</label><input id="s-key" type="password" autocomplete="off" placeholder="留空表示不修改"></div>
+        <div class="f"><label for="s-key">API 密钥<span class="sub" id="s-key-hint">（只走本地请求，进程内加密，不落明文）</span></label><input id="s-key" type="password" autocomplete="off" class="mono"></div>
       </div>
       <div class="row" style="margin-top:4px">
         <div class="f"><label><input type="checkbox" id="s-compat"> 写入兼容修正（网关拒收 role:developer 或只认 max_tokens 时勾选）</label></div>
@@ -197,13 +239,42 @@ td.mono{font-family:var(--font-mono);font-size:12.5px}
       </div>
       <h3 style="margin-top:14px">模型</h3>
       <div class="row">
-        <button class="btn" id="btn-probe">从站点拉取模型列表</button>
-        <span class="sub">拉不到也可以手填（每行一个，名字后面加 <code>?image</code> 表示支持图片）</span>
+        <button class="btn" id="btn-probe">拉取模型</button>
+        <button class="btn" id="btn-model-add">添加模型</button>
+        <span class="sub">先拉取可以点选，也可以直接手输模型 ID</span>
       </div>
       <div id="s-probe-out" class="flash"></div>
-      <div id="s-models-box" style="margin-top:8px"></div>
-      <label for="s-models-raw">手工填写（每行一个模型 ID）</label>
-      <textarea id="s-models-raw" placeholder="cn:deepseek-v4.1-flash&#10;某视觉模型?image"></textarea>
+      <div id="s-model-list" class="sub" style="margin-top:8px">（还没有模型）</div>
+
+      <div class="card" id="model-form" hidden style="margin-top:10px;background:var(--primary)">
+        <h3 id="model-form-title">添加模型</h3>
+        <label for="m-id">模型</label>
+        <div class="picker-wrap">
+          <div class="picker">
+            <input id="m-id" autocomplete="off" placeholder="请先获取模型或手动输入模型">
+            <button class="btn" id="m-toggle" type="button" aria-label="展开模型列表" title="展开模型列表">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+          </div>
+          <div id="m-dd" class="dd" hidden></div>
+        </div>
+        <div class="row" style="margin-top:8px;align-items:stretch">
+          <div class="f">
+            <label for="m-ctx">上下文</label>
+            <input id="m-ctx" autocomplete="off" placeholder="auto" inputmode="numeric">
+            <div class="sub" style="margin-top:4px">留空 = auto（交给 dsh 用默认值）；也可以填正整数</div>
+          </div>
+          <div class="f">
+            <label>视觉</label>
+            <label class="switch"><input type="checkbox" id="m-vision" role="switch"><span class="track"></span><span class="txt" id="m-vision-txt">不支持图片</span></label>
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn primary" id="btn-model-ok">确认</button>
+          <button class="btn" id="btn-model-cancel">取消</button>
+        </div>
+        <div class="flash" id="model-form-out"></div>
+      </div>
       <div class="row" style="margin-top:14px">
         <button class="btn primary" id="btn-site-save">保存站点</button>
         <button class="btn" id="btn-site-cancel">取消</button>
@@ -230,9 +301,15 @@ td.mono{font-family:var(--font-mono);font-size:12.5px}
       <h2>快速升级</h2>
       <p class="sub">流程：装到空闲槽 → 启动检查 → 才切换指针。装失败指针不动，旧版本继续可用。</p>
       <div class="row">
-        <div class="f"><label for="u-ver">目标版本（版本号 / latest / alpha）</label><input id="u-ver" placeholder="0.2.1-alpha.2"></div>
+        <div class="f"><label for="u-ver">目标版本（从列表里选）</label><select id="u-ver"></select></div>
         <button class="btn primary" id="btn-upgrade">开始升级</button>
+        <button class="btn" id="btn-ver-refresh">刷新列表</button>
+        <button class="btn" id="btn-ver-manual">手动填版本</button>
       </div>
+      <div class="row" id="u-ver-manual-box" hidden>
+        <div class="f"><label for="u-ver-raw">手动输入版本号</label><input id="u-ver-raw" placeholder="0.2.1-alpha.2"></div>
+      </div>
+      <div class="sub" id="u-ver-note" style="margin-top:6px"></div>
       <div class="flash" id="up-out"></div>
     </div>
 
@@ -242,7 +319,7 @@ td.mono{font-family:var(--font-mono);font-size:12.5px}
         <div class="f"><label for="i-slot">槽位</label>
           <select id="i-slot"><option value="agent-A">agent-A</option><option value="agent-B">agent-B</option></select>
         </div>
-        <div class="f"><label for="i-ver">要装的版本</label><input id="i-ver" placeholder="0.2.0-rc.2"></div>
+        <div class="f"><label for="i-ver">要装的版本（从列表里选）</label><select id="i-ver"></select></div>
         <button class="btn" id="btn-install-slot">安装到该槽</button>
       </div>
       <div class="flash" id="install-out"></div>
@@ -442,6 +519,10 @@ function render(s) {
     renderJob(s.jobs.running);
   }
   el('p-port').value = s.webPort;
+  // 首次使用（两个槽都没装）才显示引导，装完自动收起来
+  const fresh = !s.slot.activeVersion && !s.slot.idleVersion;
+  el('wizard').hidden = !fresh;
+  if (fresh) markSteps();
   if (s.loggedIn) el('login-ov').hidden = true;
 }
 
@@ -554,9 +635,11 @@ el('btn-switch').addEventListener('click', async () => {
 /* ---------------------------------------------------------------- 站点 */
 let SITES = [];
 let EDITING = null;
+let KEY_LENGTHS = {};   // siteId → 已保存密钥长度（用于星号填充提示）
 async function loadSites() {
   const r = await api('/api/sites');
   SITES = r.sites || [];
+  KEY_LENGTHS = r.keyLengths || {};
   const box = el('site-list');
   if (!SITES.length) { box.innerHTML = '（还没有站点）'; }
   else {
@@ -600,10 +683,20 @@ function openEditor(id) {
   el('s-api').value = s ? s.api : 'openai-completions';
   el('s-keyenv').value = s ? s.keyEnv : '';
   el('s-key').value = '';
+  // 已有密钥就用「星号按长度填充」占位：一眼看出已经存过、大约多少位，又不会把密钥显示出来
+  const keyLen = KEY_LENGTHS[EDITING] || 0;
+  el('s-key').placeholder = keyLen ? '*'.repeat(Math.min(keyLen, 80)) : '（还没有保存过密钥）';
+  el('s-key-hint').textContent = keyLen
+    ? ('已保存 ' + keyLen + ' 位；留空表示不修改')
+    : '（只走本地请求，进程内加密，不落明文）';
   el('s-compat').checked = !!(s && s.compat);
   el('s-enabled').checked = !s || s.enabled !== false;
-  el('s-models-raw').value = s ? (s.models || []).map((m) => m.id + (m.image ? '?image' : '')).join('\n') : '';
-  el('s-models-box').innerHTML = '';
+  MODELS = s ? (s.models || []).map((m) => ({ id: m.id, image: !!m.image, contextWindow: m.contextWindow || null })) : [];
+  PROBED = [];
+  PROBED_CTX = {};
+  el('model-form').hidden = true;
+  hideDd();
+  renderModelList();
   el('btn-site-del').hidden = !s;
   clearFlash('site-edit-out'); clearFlash('s-probe-out');
   el('s-id').focus();
@@ -616,6 +709,103 @@ el('s-id').addEventListener('input', () => {
     el('s-keyenv').value = id ? (id.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').replace(/^([0-9])/, '_$1') + '_API_KEY') : '';
   }
 });
+/* ---- 模型：列表 + 单模型表单（可点选/搜索/上下文/视觉）---- */
+let MODELS = [];        // 编辑器里的模型：[{id, image, contextWindow}]
+let PROBED = [];        // 从站点拉到的模型 id
+let PROBED_CTX = {};    // id → 网关顺带给的上下文长度（有就预填）
+let MODEL_EDIT = -1;    // 正在编辑第几个（-1 = 新增）
+
+function renderModelList() {
+  const box = el('s-model-list');
+  if (!MODELS.length) {
+    box.innerHTML = '<span class="sub">（还没有模型：点「添加模型」，或先「拉取模型」再点选）</span>';
+    return;
+  }
+  box.innerHTML = '<table class="mtable"><thead><tr><th>模型</th><th>上下文</th><th>视觉</th><th></th></tr></thead><tbody>' +
+    MODELS.map((m, i) => '<tr><td class="mono">' + esc(m.id) + '</td><td>' +
+      (m.contextWindow ? esc(m.contextWindow) : '<span class="sub">auto</span>') +
+      '</td><td>' + (m.image ? '<span class="pill ok">支持</span>' : '<span class="sub">—</span>') +
+      '</td><td><button class="btn" data-medit="' + i + '">编辑</button> <button class="btn danger" data-mdel="' + i + '">删除</button></td></tr>').join('') +
+    '</tbody></table>';
+  box.querySelectorAll('button[data-mdel]').forEach((b) => b.addEventListener('click', () => {
+    MODELS.splice(Number(b.dataset.mdel), 1);
+    renderModelList();
+  }));
+  box.querySelectorAll('button[data-medit]').forEach((b) => b.addEventListener('click', () => openModelForm(Number(b.dataset.medit))));
+}
+
+function hideDd() { el('m-dd').hidden = true; }
+
+function fillDd(filter) {
+  const q = String(filter || '').trim().toLowerCase();
+  const dd = el('m-dd');
+  if (!PROBED.length) {
+    // 用户要的提示语：没拉取过就点选 → 「请先获取模型或手动输入模型」
+    dd.innerHTML = '<div class="empty">请先获取模型或手动输入模型（点上面的「拉取模型」）</div>';
+  } else {
+    const list = PROBED.filter((x) => !q || x.toLowerCase().indexOf(q) >= 0);
+    dd.innerHTML = list.length
+      ? list.map((x) => '<div data-pick="' + esc(x) + '">' + esc(x) +
+        (PROBED_CTX[x] ? ' <span class="sub">上下文 ' + PROBED_CTX[x] + '</span>' : '') + '</div>').join('')
+      : '<div class="empty">没有匹配「' + esc(q) + '」的模型</div>';
+    dd.querySelectorAll('div[data-pick]').forEach((d) => d.addEventListener('mousedown', (ev) => {
+      ev.preventDefault();   // 别让输入框失焦，否则下拉会先被关掉
+      el('m-id').value = d.dataset.pick;
+      if (PROBED_CTX[d.dataset.pick] && !el('m-ctx').value.trim()) el('m-ctx').value = String(PROBED_CTX[d.dataset.pick]);
+      hideDd();
+    }));
+  }
+  dd.hidden = false;
+}
+
+function openModelForm(idx) {
+  MODEL_EDIT = (typeof idx === 'number' && idx >= 0) ? idx : -1;
+  const m = MODEL_EDIT >= 0 ? MODELS[MODEL_EDIT] : null;
+  el('model-form').hidden = false;
+  el('model-form-title').textContent = m ? ('编辑模型 ' + m.id) : '添加模型';
+  el('m-id').value = m ? m.id : '';
+  el('m-ctx').value = (m && m.contextWindow) ? String(m.contextWindow) : '';
+  el('m-vision').checked = !!(m && m.image);
+  el('m-vision-txt').textContent = el('m-vision').checked ? '支持图片' : '不支持图片';
+  el('m-id').placeholder = PROBED.length
+    ? ('点右边箭头从 ' + PROBED.length + ' 个模型里选，或直接输入')
+    : '请先获取模型或手动输入模型';
+  hideDd();
+  clearFlash('model-form-out');
+  el('m-id').focus();
+}
+
+el('btn-model-add').addEventListener('click', () => openModelForm(-1));
+el('btn-model-cancel').addEventListener('click', () => { el('model-form').hidden = true; hideDd(); });
+el('m-toggle').addEventListener('click', () => { if (el('m-dd').hidden) fillDd(el('m-id').value); else hideDd(); });
+el('m-id').addEventListener('focus', () => fillDd(el('m-id').value));
+el('m-id').addEventListener('input', () => fillDd(el('m-id').value));
+el('m-id').addEventListener('keydown', (e) => { if (e.key === 'Escape') hideDd(); });
+el('m-vision').addEventListener('change', () => {
+  el('m-vision-txt').textContent = el('m-vision').checked ? '支持图片' : '不支持图片';
+});
+el('btn-model-ok').addEventListener('click', () => {
+  const id = el('m-id').value.trim();
+  if (!id) { flash('model-form-out', '请先获取模型或手动输入模型', 'err'); return; }
+  const raw = el('m-ctx').value.trim();
+  let contextWindow = null;
+  if (raw && raw.toLowerCase() !== 'auto') {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n <= 0) { flash('model-form-out', '上下文要么留空（auto），要么填正整数。', 'err'); return; }
+    contextWindow = n;
+  }
+  if (MODELS.some((m, i) => m.id === id && i !== MODEL_EDIT)) {
+    flash('model-form-out', '这个模型已经添加过了。', 'err');
+    return;
+  }
+  const entry = { id, image: el('m-vision').checked, contextWindow };
+  if (MODEL_EDIT >= 0) MODELS[MODEL_EDIT] = entry; else MODELS.push(entry);
+  el('model-form').hidden = true;
+  hideDd();
+  renderModelList();
+  flash('s-probe-out', '已' + (MODEL_EDIT >= 0 ? '更新' : '添加') + '模型 ' + id + '（点「保存站点」才真正写进配置）。', 'ok');
+});
+
 el('btn-probe').addEventListener('click', (e) => withBusy(e.currentTarget, '拉取中…', async () => {
   clearFlash('s-probe-out');
   try {
@@ -624,42 +814,30 @@ el('btn-probe').addEventListener('click', (e) => withBusy(e.currentTarget, '拉�
       key: el('s-key').value || undefined, siteId: EDITING || undefined,
     });
     if (!r.ok) { flash('s-probe-out', '拉取失败：' + (r.error || ''), 'err'); return; }
-    const existing = el('s-models-raw').value.split('\n').map((x) => x.trim()).filter(Boolean);
-    el('s-models-box').innerHTML = '<div class="sub" style="margin-bottom:6px">拉到 ' + r.models.length + ' 个模型，勾选要使用的：</div>' +
-      r.models.map((m) => {
-        const on = existing.some((x) => x.split('?')[0] === m) || !existing.length;
-        return '<label style="display:block;margin:4px 0"><input type="checkbox" data-model="' + esc(m) + '"' + (on ? ' checked' : '') + '> ' + esc(m) +
-          ' <span class="sub">视觉</span> <input type="checkbox" data-vision="' + esc(m) + '"></label>';
-      }).join('') + '<div class="row" style="margin-top:8px"><button class="btn" id="btn-apply-models">用勾选的模型填充下面清单</button></div>';
-    el('btn-apply-models').addEventListener('click', () => {
-      const picked = [];
-      el('s-models-box').querySelectorAll('input[data-model]').forEach((cb) => {
-        if (cb.checked) {
-          const vis = el('s-models-box').querySelector('input[data-vision="' + CSS.escape(cb.dataset.model) + '"]');
-          picked.push(cb.dataset.model + (vis && vis.checked ? '?image' : ''));
-        }
-      });
-      el('s-models-raw').value = picked.join('\n');
-    });
-    flash('s-probe-out', '拉取成功（HTTP ' + r.status + '）。', 'ok');
+    PROBED = r.models || [];
+    PROBED_CTX = {};
+    for (const d of (r.details || [])) if (d && d.contextWindow) PROBED_CTX[d.id] = d.contextWindow;
+    const withCtx = Object.keys(PROBED_CTX).length;
+    el('m-id').placeholder = PROBED.length ? ('点右边箭头从 ' + PROBED.length + ' 个模型里选，或直接输入') : '拉到了 0 个模型，可以手动输入';
+    flash('s-probe-out', '拉到 ' + PROBED.length + ' 个模型' + (withCtx ? ('，其中 ' + withCtx + ' 个带上下文信息') : '') +
+      '。点「添加模型」后可以从列表点选。', 'ok');
   } catch (err) { flash('s-probe-out', '拉取失败：' + err.message, 'err'); }
 }));
 el('btn-site-save').addEventListener('click', (e) => withBusy(e.currentTarget, '保存中…', async () => {
   clearFlash('site-edit-out');
-  const models = el('s-models-raw').value.split('\n').map((x) => x.trim()).filter(Boolean).map((x) => {
-    const [id, flag] = x.split('?');
-    return { id: id.trim(), image: (flag || '').trim() === 'image' };
-  });
   const site = {
     id: el('s-id').value.trim(), name: el('s-name').value.trim(), baseURL: el('s-url').value.trim(),
     api: el('s-api').value, keyEnv: el('s-keyenv').value.trim() || undefined,
-    models, compat: el('s-compat').checked ? true : null, enabled: el('s-enabled').checked,
+    models: MODELS.slice(), compat: el('s-compat').checked ? true : null, enabled: el('s-enabled').checked,
   };
   try {
     const r = await api('/api/sites', { site });
     let msg = '站点已保存，覆盖层' + (r.backup ? '（旧文件已备份）' : '') + '。';
-    const key = el('s-key').value;
-    if (key) {
+    const key = el('s-key').value.trim();
+    // 占位星号（我们把已有密钥按长度显示成星号）绝不能被当成真密钥提交
+    if (key && /^\*+$/.test(key)) {
+      msg += '\n（输入框里的星号是「已有密钥」的提示，没有提交；要换密钥请直接粘贴新的）';
+    } else if (key) {
       const kr = await api('/api/key', { siteId: site.id, key, keyEnv: site.keyEnv });
       msg += '\n密钥已加密保存（变量名 ' + kr.keyName + '，' + kr.length + ' 字符）。';
     }
@@ -747,16 +925,95 @@ async function runJob(path, body, btn, label) {
     flash('job-out', '无法开始任务：' + e.message, 'err');
   }
 }
+/* ---- 版本列表：从 npm 官方源取，界面只让用户点选 ---- */
+let VERSIONS = null;
+async function loadVersions(force) {
+  try {
+    const v = await api('/api/versions' + (force ? '?force=1' : ''), undefined, 'GET');
+    if (!v.ok) throw new Error(v.error || '取不到版本列表');
+    VERSIONS = v;
+    fillVersionSelects();
+    el('u-ver-note').textContent = '共 ' + v.count + ' 个版本 · 来源 ' + v.source + ' · 标签 ' +
+      Object.keys(v.tags).map((k) => k + '=' + v.tags[k]).join('、') +
+      ' · 已装 A=' + (v.installed['agent-A'] || '无') + ' B=' + (v.installed['agent-B'] || '无');
+    markSteps();
+    return v;
+  } catch (e) {
+    el('u-ver-note').textContent = '取不到版本列表：' + e.message + '　（可以点「手动填版本」直接输入）';
+    for (const id of ['u-ver', 'i-ver', 'wz-ver']) {
+      const s = el(id);
+      if (s && (!s.options || !s.options.length)) s.innerHTML = '<option value="">（取不到列表，请手动填）</option>';
+    }
+    return null;
+  }
+}
+function fillVersionSelects() {
+  if (!VERSIONS) return;
+  const opts = VERSIONS.versions.map((v) => {
+    const tags = v.tags.length ? '（' + v.tags.join(' ') + '）' : '';
+    const inst = [];
+    if (VERSIONS.installed['agent-A'] === v.version) inst.push('已装 A');
+    if (VERSIONS.installed['agent-B'] === v.version) inst.push('已装 B');
+    return '<option value="' + esc(v.version) + '">' + esc(v.version) + esc(tags) +
+      (inst.length ? ' · ' + inst.join(' / ') : '') + '</option>';
+  }).join('');
+  for (const id of ['u-ver', 'i-ver', 'wz-ver']) el(id).innerHTML = opts;
+  // 默认选中 alpha（dsh 当前只有 rc/alpha 线）；没有就选最新
+  const preferred = VERSIONS.tags.alpha || VERSIONS.tags.next || VERSIONS.tags.latest ||
+    (VERSIONS.versions[0] && VERSIONS.versions[0].version);
+  for (const id of ['u-ver', 'i-ver', 'wz-ver']) {
+    const s = el(id);
+    if (!s) continue;
+    if (preferred && Array.from(s.options || []).some((o) => o.value === preferred)) s.value = preferred;
+  }
+}
+el('btn-ver-refresh').addEventListener('click', (e) => withBusy(e.currentTarget, '刷新中…', () => loadVersions(true)));
+el('btn-ver-manual').addEventListener('click', (e) => {
+  const box = el('u-ver-manual-box');
+  box.hidden = !box.hidden;
+  e.currentTarget.textContent = box.hidden ? '手动填版本' : '用列表选择';
+  if (!box.hidden) el('u-ver-raw').focus();
+});
+function pickedVersion() {
+  if (!el('u-ver-manual-box').hidden) return el('u-ver-raw').value.trim();
+  return String(el('u-ver').value || '').trim();
+}
 el('btn-upgrade').addEventListener('click', (e) => {
-  const v = el('u-ver').value.trim();
-  if (!v) { flash('up-out', '请填目标版本。', 'err'); return; }
+  const v = pickedVersion();
+  if (!v) { flash('up-out', '请先从列表里选一个版本（或用「手动填版本」）。', 'err'); return; }
   runJob('/api/jobs/upgrade', { version: v }, e.currentTarget, '升级中…');
 });
 el('btn-install-slot').addEventListener('click', (e) => {
-  const version = el('i-ver').value.trim();
-  if (!version) { flash('install-out', '请填写要装的版本。', 'err'); return; }
+  const version = String(el('i-ver').value || el('u-ver-raw').value || '').trim();
+  if (!version) { flash('install-out', '请先从列表里选一个版本。', 'err'); return; }
   runJob('/api/jobs/install', { slot: el('i-slot').value, version }, e.currentTarget, '安装中…');
 });
+/* 向导：装到空闲槽（版本同样从列表里选） */
+el('btn-wz-install').addEventListener('click', (e) => {
+  const version = String(el('wz-ver').value || '').trim();
+  if (!version) { flash('wz-out', '还没拿到版本列表：点「刷新列表」，或用「升级」页的手动填版本。', 'err'); return; }
+  const idle = (STATE && STATE.slot && STATE.slot.idle) || 'agent-B';
+  runJob('/api/jobs/install', { slot: idle, version }, e.currentTarget, '安装中…');
+});
+el('btn-wz-site').addEventListener('click', () => goTab('sites'));
+function markSteps() {
+  const spans = el('wz-steps').querySelectorAll('span');
+  const hasSite = !!(STATE && STATE.sites && STATE.sites.list && STATE.sites.list.length);
+  const hasKey = !!(STATE && STATE.key && STATE.key.configured);
+  const hasVer = !!(STATE && (STATE.slot.activeVersion || STATE.slot.idleVersion)) ||
+    !!(VERSIONS && (VERSIONS.installed['agent-A'] || VERSIONS.installed['agent-B']));
+  const running = !!(STATE && STATE.dsh && STATE.dsh.running);
+  const doneMap = { 1: hasSite && hasKey, 2: hasVer, 3: running };
+  let firstOpen = true;
+  spans.forEach((sp) => {
+    const w = sp.dataset.w;
+    if (doneMap[w]) { sp.className = 'done'; return; }
+    sp.className = firstOpen ? 'on' : '';
+    firstOpen = false;
+  });
+  el('wz-note').textContent = '① 先在「站点和模型」里加站点并保存密钥；② 选版本装进空闲槽（' +
+    ((STATE && STATE.slot && STATE.slot.idle) || 'agent-B') + '）；③ 回这一页点「启动 dsh」。';
+}
 el('btn-job-cancel').addEventListener('click', async () => {
   if (!CURRENT_JOB) { flash('job-out', '当前没有任务。', 'warn'); return; }
   try {
@@ -841,6 +1098,7 @@ el('btn-temp').addEventListener('click', async () => {
     el('login-ov').hidden = true;
   }
   await loadSites().catch(() => {});
+  loadVersions();      // 版本列表（失败也不影响其它功能，页面会提示改用手动填）
   startPolling();
 })();
 </script>

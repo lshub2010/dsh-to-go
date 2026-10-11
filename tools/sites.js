@@ -43,10 +43,22 @@ function emptyState() {
   return { version: 1, default: null, sites: [] };
 }
 
+/**
+ * 一个模型条目：`contextWindow` 为空表示 "auto"（不写进覆盖层，交给 dsh 用它自己的默认值）；
+ * 填了就必须是正整数——dsh 那边校验是 `Number.isInteger(contextWindow) && > 0`，
+ * 写个 0 或小数会让整个 provider 配置被判非法。
+ */
 function normalizeModel(m) {
   const id = String((m && m.id) || '').trim();
   if (!id) return null;
-  return { id, image: !!(m && m.image) };
+  const raw = (m && m.contextWindow);
+  let contextWindow = null;
+  if (raw !== undefined && raw !== null && String(raw).trim() !== '' && String(raw).trim() !== 'auto') {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n <= 0) throw new Error('模型 ' + id + ' 的上下文必须是正整数（或留空=auto）');
+    contextWindow = n;
+  }
+  return { id, image: !!(m && m.image), contextWindow };
 }
 
 /** 校验并补全一个站点对象；不合法则抛错（带中文原因）。 */
@@ -213,6 +225,8 @@ function buildOverlay(state, opts) {
       for (const m of s.models) {
         L.push('          - id: ' + yamlScalar(m.id));
         if (m.image) L.push('            input: [text, image]');
+        // 只有用户明确填了才写：留空 = 用 dsh 自己的默认上下文窗口（页面里显示为 auto）
+        if (m.contextWindow) L.push('            contextWindow: ' + m.contextWindow);
       }
     }
   }
@@ -282,8 +296,18 @@ async function probeModels(cfg) {
     let j = null;
     try { j = JSON.parse(text); } catch (e) { return { ok: false, status: res.status, error: '返回不是 JSON（前 120 字）：' + text.slice(0, 120) }; }
     const list = Array.isArray(j.data) ? j.data : (Array.isArray(j.models) ? j.models : (Array.isArray(j) ? j : []));
-    const ids = list.map((m) => String((m && (m.id || m.name || m.model)) || '').trim()).filter(Boolean);
-    return { ok: true, status: res.status, models: Array.from(new Set(ids)), raw: list.length };
+    const ids = [];
+    const details = [];
+    for (const m of list) {
+      const id = String((m && (m.id || m.name || m.model)) || '').trim();
+      if (!id || ids.indexOf(id) >= 0) continue;
+      ids.push(id);
+      // 有的网关会在 /models 里顺带给出上下文长度，能省用户一次手填；字段名各家不一，都认
+      const ctx = m && (m.context_length || m.contextLength || m.context_window || m.contextWindow || m.context || m.max_context_length);
+      const n = Number(ctx);
+      details.push(Number.isInteger(n) && n > 0 ? { id, contextWindow: n } : { id });
+    }
+    return { ok: true, status: res.status, models: ids, details, raw: list.length };
   } catch (e) {
     const msg = (e && e.name === 'AbortError') ? ('超时（' + (c.timeoutMs || 15000) + 'ms 内没有响应）') : String(e && e.message || e);
     return { ok: false, error: msg };
