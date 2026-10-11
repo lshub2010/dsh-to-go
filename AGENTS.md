@@ -72,6 +72,12 @@ runtime/ data/ secrets/ backups/   运行产物，**不进 git**
 - **目录体积很贵**：遍历整棵 `runtime\` 上万个文件要 2～3 秒（慢盘更久）。已做 60 秒内存缓存 + `runtime\sizes.json` 落盘缓存（首次先用上次的值、后台重算）。别把 `dirSize()` 直接放回热路径。
 - **模型列表可缓存**：探测结果按站点存 `data\probe-cache.json`（带 baseURL/协议与时间戳，站点地址或协议改了自动失效），页面打开站点时直接用缓存，不必每次重新拉取。
 
+- **拔盘守护**（`tools\watchdog.js`）：哨兵 `runtime\.drive-id` 存 JSON（id / root / created），
+  每 3 秒读一次（`WZD_DRIVE_POLL_MS` 可调），连续 3 次（`WZD_DRIVE_MISSES` 可调）读不到就判定丢盘。
+  判定只有三种：读不到、id 变了（换盘）、内容坏了——**坏内容不能当「盘还在」**，宁停不跑。
+  丢盘记录只能写宿主临时目录：`lossLogPath()` 会把「落在被监视盘上」的宿主目录改写出去，否则写了等于没写。
+  判定后的退出码是约定的：`launch.js` = 3、`ui-server.js` = 4（是「盘没了」，不是崩溃，排障别当异常）。
+
 ## 5. 怎么验（每次改完至少跑这些）
 
 ```bat
@@ -123,7 +129,16 @@ runtime\node\node.exe tools\plugins.js setup-pnpm  :: 把 pnpm 装到本盘
 
 
 
-## 9. 提交约定
+## 9. 拔盘守护（动这几类文件前必读）
+
+- 守护在 `tools\watchdog.js`，接入点是两处：`launch.js`（dsh 的直接父进程，丢盘时杀子树退出 3）
+  与 `ui-server.js`（长命的后端，丢盘时取消任务 + 杀 dsh 子树 + 退出 4）。**新增会持有子进程/长任务的入口时，同样要接一次。**
+- 哨兵 `runtime\.drive-id` 跟着盘走（不是 `data\`，也不算用户数据）。删它 = 触发守护。
+- 丢盘记录写宿主：`%LOCALAPPDATA%\Temp\dsh-to-go\drive-lost.json`（只留最近 8 条）。
+  这是「不碰宿主」规则的一个明确例外——盘都没了，只能写宿主；除此之外仍然不许往宿主写任何东西。
+- 页面上的体现：概览顶部横幅（`#banner`）+ 诊断页「拔盘守护」卡片 + `/api/drive-lost/clear`（要解锁）。
+
+## 10. 提交约定
 
 - 默认分支 `main`，个人开源项目，改动可直接提交 `main`（不需要 PR 流程）。
 - 提交信息写清「改了什么 + 为什么 + 怎么验的」；行为变更同步更新 `docs/ROADMAP.md` 的记录表。

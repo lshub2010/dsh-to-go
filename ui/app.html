@@ -118,6 +118,11 @@ label.switch input:checked ~ .txt{color:var(--accent)}
 .mtable td.mono{font-family:var(--font-mono);font-size:12.5px}
 @media (prefers-reduced-motion: reduce){*{animation:none !important;transition:none !important}}
 @media (max-width:640px){.grid{grid-template-columns:1fr}.grid > div:nth-child(odd){margin-top:8px}header{padding:12px 14px}main{padding:14px 14px 60px}}
+#banner{padding:10px 16px;border-bottom:1px solid var(--border);background:rgba(245,158,11,.16);color:var(--fg);font-size:13px;line-height:1.6}
+#banner[hidden]{display:none}
+#banner.danger{background:rgba(239,68,68,.18)}
+#banner .b-t{font-weight:600;margin-right:4px}
+#banner code{background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;font-size:12px;font-family:var(--font-mono)}
 </style>
 </head>
 <body>
@@ -141,6 +146,8 @@ label.switch input:checked ~ .txt{color:var(--accent)}
   <button role="tab" data-tab="diag" aria-selected="false">诊断</button>
   <button role="tab" data-tab="plugins" aria-selected="false">插件</button>
 </nav>
+
+<div id="banner" hidden></div>
 
 <main>
   <!-- ============================================ 概览 -->
@@ -355,6 +362,16 @@ label.switch input:checked ~ .txt{color:var(--accent)}
     </div>
 
     <div class="card">
+      <h2>拔盘守护</h2>
+      <div class="sub">U 盘被拔走以后，还在内存里跑的进程不会自己停——dsh 会继续对着一个不存在的盘干活：会话写不回去、任务白跑，等盘插回来看到的还是盘上那份旧状态。所以本服务每隔几秒在盘上读一次自己的哨兵文件，连续几次读不到就判定「盘没了」：先写一条记录到宿主临时目录，然后停掉在跑的任务、杀掉 dsh，最后退出本服务。</div>
+      <div class="grid" id="diag-watch"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="btn-clear-dl">清除「上次丢盘」记录</button>
+      </div>
+      <div class="sub" id="diag-watch-note" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
       <h2>网页端口</h2>
       <div class="row">
         <div class="f"><label for="p-port">dsh 网页端口（默认 3180，避开机器上自装的 dsh）</label><input id="p-port"></div>
@@ -529,6 +546,7 @@ function goTab(name) {
 /* ---------------------------------------------------------------- 状态渲染 */
 function render(s) {
   STATE = s;
+  renderWatch(s);
   el('hdr-sub').textContent = '活动槽 ' + s.slot.active + '（dsh ' + s.slot.activeVersion + '） · 端口 ' + s.webPort;
   const lg = el('hdr-login');
   lg.className = 'pill ' + (s.loggedIn ? 'ok' : 'warn');
@@ -607,14 +625,66 @@ function renderJob(j, gridId) {
   ]);
 }
 
+let FAILS = 0;
 async function refresh() {
   try {
     render(await api('/api/state'));
+    FAILS = 0;
+    renderBanner();
     return STATE;
   } catch (e) {
+    FAILS++;
+    if (FAILS >= 3) bannerBackendGone();
     flash('ov-dsh-out', '读取状态失败：' + e.message, 'err');
     return null;
   }
+}
+
+/* ------------------------------------------------- 拔盘守护 / 后台断线横幅 */
+function showBanner(html, danger) {
+  const b = el('banner');
+  b.className = danger ? 'danger' : '';
+  b.innerHTML = html;
+  b.hidden = false;
+}
+function hideBanner() { const b = el('banner'); b.innerHTML = ''; b.hidden = true; }
+function renderBanner() {
+  const lost = STATE && STATE.driveLost;
+  if (lost) {
+    showBanner('<span class="b-t">上一次运行时检测到本盘被拔出：</span>' + esc(String(lost.at || '')) +
+      '（' + esc(String(lost.reason || '')) + '）——当时已自动停掉 dsh 和任务。' +
+      '丢盘记录写在宿主临时目录 <code>' + esc(String(lost.log || '')) + '</code>，可在「诊断 → 拔盘守护」里清除。');
+    return;
+  }
+  hideBanner();
+}
+function bannerBackendGone() {
+  showBanner('<span class="b-t">后台服务没有响应</span>已连续 3 次读不到状态：可能是盘被拔出、服务窗口被关掉，或进程被结束了。' +
+    '盘上的数据以最后一次成功写入为准；重新插好盘、重新打开 dsh-ui.cmd 即可继续。' +
+    ' <button class="btn" id="btn-reconnect">重新连接</button>', true);
+  const b = el('btn-reconnect');
+  if (b) b.addEventListener('click', () => location.reload());
+}
+function renderWatch(s) {
+  const w = s.driveWatch || {};
+  rows('diag-watch', [
+    ['守护状态', w.running ? '<span class="pill ok"><span class="dot on"></span> 运行中</span>' : '<span class="pill warn">未运行</span>'],
+    ['判定规则', '每 ' + String(w.intervalMs || '?') + ' 毫秒读一次哨兵，连续 ' + String(w.maxMisses || '?') + ' 次读不到 → 判定丢盘'],
+    ['成功 / 连续失败', String(w.oks || 0) + ' 次 / ' + String(w.misses || 0) + ' 次'],
+    ['最近一次确认', w.lastOkAt ? esc(w.lastOkAt) : '（还没有）'],
+    ['哨兵文件', w.sentinel ? '<span class="mono">' + esc(w.sentinel) + '</span>' : '<span class="pill warn">未建立</span>'],
+  ]);
+  const lost = s.driveLost;
+  el('diag-watch-note').innerHTML = lost
+    ? '上次丢盘：' + esc(String(lost.at || '')) + '（' + esc(String(lost.reason || '')) + '），记录在 <code>' + esc(String(lost.log || '')) + '</code>'
+    : '没有丢盘记录（正常）。';
+}
+async function clearDriveLost() {
+  try {
+    await api('/api/drive-lost/clear', {});
+    flash('diag-out', '已清除丢盘记录。', 'ok');
+    await refresh();
+  } catch (e) { flash('diag-out', '清除失败：' + e.message, 'err'); }
 }
 
 /* ---------------------------------------------------------------- 解锁 */
@@ -1191,6 +1261,7 @@ el('btn-backup').addEventListener('click', (e) => withBusy(e.currentTarget, '备
   catch (e2) { flash('diag-out', '备份失败：' + e2.message, 'err'); }
 }));
 el('btn-refresh').addEventListener('click', refresh);
+el('btn-clear-dl').addEventListener('click', clearDriveLost);
 el('btn-port').addEventListener('click', async () => {
   try {
     const r = await api('/api/port', { port: parseInt(el('p-port').value, 10) });

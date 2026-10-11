@@ -26,6 +26,10 @@ const { spawn, spawnSync } = require('child_process');
 const secretLib = require('./secret.js');
 const siteLib = require('./site.js');
 const jobsLib = require('./jobs.js');
+const watchdog = require('./watchdog.js');
+
+// 丢盘记录只能写宿主临时目录——盘没了，写不回盘上
+const HOST_TMP = process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Temp') : os.tmpdir();
 
 const ROOT = path.resolve(__dirname, '..');
 const RUNTIME = path.join(ROOT, 'runtime');
@@ -383,6 +387,8 @@ function state() {
     },
     lastUpgradeLines: tail(VERSION_FILE, 40).split('\n').filter((l) => l.includes('registry=')).slice(-3),
     launcherLog: tail(path.join(DATA, 'logs', 'launcher.log'), 12),
+    driveLost: watchdog.readLossRecords(HOST_TMP, ROOT).slice(-1)[0] || null,
+    driveWatch: DRIVE_WATCH ? DRIVE_WATCH.status() : null,
   };
 }
 
@@ -405,7 +411,7 @@ async function handleApi(req, res, url) {
   // 需要「已输入口令」才允许的写操作：碰密钥、跑安装/插件、启停进程。
   // 端口/临时目录这类不碰密钥的设置不在此列。
   const NEEDS_LOGIN = ['/api/key', '/api/key/clear', '/api/keys/migrate', '/api/site', '/api/site/clear',
-    '/api/upgrade', '/api/jobs/install', '/api/jobs/upgrade', '/api/jobs/pnpm', '/api/jobs/cancel',
+    '/api/upgrade', '/api/jobs/install', '/api/jobs/upgrade', '/api/jobs/pnpm', '/api/jobs/cancel', '/api/drive-lost/clear',
     '/api/plugins/toggle', '/api/plugins/install', '/api/plugins/uninstall', '/api/plugins/allow-version',
     '/api/plugins/pnpm-setup',
     '/api/dsh/start', '/api/dsh/stop', '/api/backup'];
@@ -739,6 +745,12 @@ async function handleApi(req, res, url) {
       return send(200, { ok: true, job: r.job });
     }
 
+    if (p === '/api/drive-lost/clear' && req.method === 'POST') {
+      if (!requireLogin()) return send(401, { error: '需要先解锁配置页' });
+      watchdog.clearLossRecords(HOST_TMP, ROOT);
+      return send(200, { ok: true, state: state() });
+    }
+
     if (p === '/api/sites' && req.method === 'POST') {
       const sitesLib = require('./sites.js');
       try {
@@ -865,6 +877,37 @@ const server = http.createServer(async (req, res) => {
   return res.end('not found');
 });
 
+// ------------------------------------------------------------------ 拔盘守护
+// 盘被拔走时：丢盘记录先写进宿主临时目录（watchdog 内部做），然后取消正在跑的任务、
+// 杀掉 dsh 子进程树，最后自己退出。不这么做的话，dsh 会继续对着一个不存在的盘干活——
+// 会话写不回去、任务白跑，等盘插回来看到的还是盘上那份旧状态。
+let DRIVE_WATCH = null;
+function startDriveWatch() {
+  if (DRIVE_WATCH) return DRIVE_WATCH;
+  DRIVE_WATCH = new watchdog.DriveWatch({
+    hostTempDir: HOST_TMP,
+    role: 'ui-server',
+    onLost: (rec) => {
+      console.log('');
+      console.log('  【拔盘守护】本盘已不在（' + rec.reason + '）：停止本实例的所有活动。');
+      try {
+        const busy = jobsLib.runningJob();
+        if (busy) { jobsLib.cancelJob(busy.id); console.log('  【拔盘守护】已取消任务 ' + busy.id); }
+      } catch (e) { /* 尽力而为 */ }
+      try {
+        if (dshChild && dshChild.pid) {
+          require('child_process').spawnSync('taskkill', ['/F', '/T', '/PID', String(dshChild.pid)], { windowsHide: true });
+          console.log('  【拔盘守护】已停止 dsh 子进程树');
+        }
+      } catch (e) { /* 尽力而为 */ }
+      console.log('  【拔盘守护】丢盘记录写在：' + (rec.log || '宿主临时目录（没写进去）'));
+      setTimeout(() => process.exit(4), 1500);
+    },
+  });
+  DRIVE_WATCH.start();
+  return DRIVE_WATCH;
+}
+
 server.listen(PORT, '127.0.0.1', () => {
   const link = 'http://127.0.0.1:' + PORT + '/?token=' + TOKEN;
   console.log('');
@@ -873,6 +916,10 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log('  （令牌每次启动随机生成；页面只在 127.0.0.1 上提供，关闭本窗口即失效）');
   console.log('  按 Ctrl+C 结束。');
   console.log('');
+  startDriveWatch();
+  console.log('  拔盘守护：已开启（每 3 秒确认本盘还在；盘被拔走就停任务、停 dsh、退出本服务）');
+  console.log('');
+
   if (!NO_OPEN) {
     try { spawnSync('cmd', ['/c', 'start', '', link], { windowsHide: true }); } catch (e) { /* user can click the link */ }
   }

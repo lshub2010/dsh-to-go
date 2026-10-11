@@ -63,7 +63,8 @@ dsh-to-go\
 │   ├─ pnpm\ pnpm-store\    盘上 pnpm（装卸插件用，按需安装）
 │   ├─ npm-cache\           盘内 npm 缓存
 │   ├─ current.txt          当前活动槽
-│   └─ port.txt             网页端口
+│   ├─ port.txt             网页端口
+│   └─ .drive-id            拔盘守护的哨兵（别删：删了它分不清「被删」和「盘被拔了」）
 ├─ data\                    DSH_HOME：会话/工作区/配置（不进 git）
 ├─ secrets\                 AES 加密的密钥文件（不进 git）
 ├─ backups\                 槽位备份 zip（不进 git）
@@ -84,6 +85,23 @@ dsh-to-go\
 | `tools\rescue\dsh-cli.cmd` | 不打开界面的用法：`tools\rescue\dsh-cli.cmd --version`、`tools\rescue\dsh-cli.cmd headless "改个 bug"` |
 | `tools\rescue\dsh-config.cmd` | 终端维护台：自检 / 升级 / 切槽 / 备份 / 密钥 / 站点配置 / 打开图形页 |
 | `tools\rescue\dsh-doctor.cmd` | 一键体检：Node、槽位、端口、密钥、站点、残留进程、宿主污染 |
+
+## U 盘被拔走会怎样（拔盘守护）
+
+进程不会因为你拔了盘就自己停：dsh 还在内存里跑，它并不知道 `data\` 已经没了——会话写不回去、任务白跑，等你把盘插回来，看到的还是盘上那份旧状态。**这才是拔盘最真实的损失。**
+
+所以这个包里带了一个拔盘守护：
+
+1. 启动时在盘上写一个哨兵文件 `runtime\.drive-id`（带随机 id 和盘根路径）。
+2. 每 3 秒读一次。读不到（盘没了）或者 id 变了（换成另一块盘）都算异常。
+3. **连续 3 次**（约 9 秒）都异常 → 判定盘没了，立刻做三件事：
+   - 先把一条丢盘记录写到**宿主的临时目录**（盘都没了，写不回盘上）：`%LOCALAPPDATA%\Temp\dsh-to-go\drive-lost.json`；
+   - 停掉正在跑的任务、杀掉 dsh 的进程树；
+   - 退出本服务（退出码 4；`launch.js` 那条路是 3——是「盘被拔了」，不是崩溃）。
+4. 下次打开页面，「概览」顶部会有一条横幅说明上次是被拔盘打断的，记录可以在「诊断 → 拔盘守护」里清除。
+
+间隔和次数可以用环境变量调（进程内 `WZD_DRIVE_POLL_MS` / `WZD_DRIVE_MISSES`，不会写进系统）。
+**注意**：守护只能发现「读不到」，发现不了「盘还在但写入失败」（比如半接触不良）——那种情况 dsh 自己会报错。
 
 ## 密钥是怎么保住的
 

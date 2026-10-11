@@ -21,6 +21,18 @@ const readline = require('readline');
 const { spawn } = require('child_process');
 const secretLib = require('./secret.js');
 const sitesLib = require('./sites.js');
+const watchdog = require('./watchdog.js');
+
+/** 杀一整棵进程树（Windows 用 taskkill /T）——盘已经没了，没时间温柔 */
+function killTree(pid) {
+  if (!pid) return false;
+  try {
+    require('child_process').spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore' });
+    return true;
+  } catch (e) {
+    try { process.kill(pid); return true; } catch (e2) { return false; }
+  }
+}
 
 const ROOT = path.resolve(__dirname, '..');
 const RUNTIME = path.join(ROOT, 'runtime');
@@ -345,6 +357,22 @@ async function main() {
     log('exit code=' + code + ' signal=' + signal);
     process.exit(code === null ? 1 : code);
   });
+
+  // 拔盘守护：盘被拔走后立刻收摊。否则 dsh 会继续对着一个不存在的盘干活——
+  // 会话写不回去、任务白跑，等盘插回来看到的还是旧状态，那才是真正的损失。
+  const watch = new watchdog.DriveWatch({
+    hostTempDir: tempRoot(process.env),
+    role: 'launcher',
+    log: (l) => log(l),
+    onLost: (rec) => {
+      console.log('');
+      console.log('【启动器】本盘已不在（' + rec.reason + '）：立刻停止 dsh，避免继续在没有盘的情况下运行。');
+      console.log('【启动器】这次丢盘的记录写在：' + (rec.log || '宿主临时目录（没写进去）'));
+      killTree(child.pid);
+      setTimeout(() => process.exit(3), 2000);
+    },
+  });
+  watch.start();
   return -1; // keep the event loop alive until the child exits
 }
 
