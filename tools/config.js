@@ -21,8 +21,7 @@ const ROOT = process.env.WZD_ROOT || path.resolve(__dirname, '..');
 const RUNTIME = path.join(ROOT, 'runtime');
 const NODE_EXE = path.join(RUNTIME, 'node', 'node.exe');
 const NPM_CLI = path.join(RUNTIME, 'node', 'node_modules', 'npm', 'bin', 'npm-cli.js');
-const DATA = path.join(ROOT, 'data');
-const SECRET_FILE = path.join(ROOT, 'secrets', 'model-key.enc');
+const DATA = process.env.WZD_DATA_DIR || path.join(ROOT, 'data');
 const SLOT_FILE = path.join(RUNTIME, 'current.txt');
 const PORT_FILE = path.join(RUNTIME, 'port.txt');
 const BACKUP_DIR = path.join(ROOT, 'backups');
@@ -331,7 +330,7 @@ function setKey() {
     console.log('  请用图形配置页（dsh-ui.cmd）逐个站点设置密钥，或先设好默认模型。');
     return 1;
   }
-  console.log('  把模型密钥以 AES-256-GCM 密文写入 secrets\\keys.enc（多站点密钥库）。');
+  console.log('  把模型密钥以 AES-256-GCM 密文写入 ' + secretLib.secretFile() + '（多站点密钥库）。');
   console.log('  口令会问两遍，且不保存在任何地方；忘记口令只需重新输入密钥，不会丢数据。');
   if (site.id) console.log('  这本密钥属于站点：' + site.id + '（变量名按站点表自动决定）');
   const args = [path.join(__dirname, 'secret.js'), 'set'];

@@ -117,13 +117,64 @@ function emptyStore() {
   return { version: 2, algo: 'aes-256-gcm', kdf: 'scrypt', kdf_params: SCRYPT, verifier: null, keys: {}, updated: null };
 }
 
-function readStore(file) {
+/**
+ * 密钥库文件的状态：missing（不存在）/ ok / corrupt（存在但读不出来）。
+ * 「损坏」绝不能与「不存在」混为一谈：否则下一次写入会用空库覆盖掉用户所有密钥。
+ */
+function storeState(file) {
   const f = file || secretFile();
+  let text;
+  try { text = fs.readFileSync(f, 'utf8'); } catch (e) { return { state: 'missing', file: f }; }
   try {
-    const j = JSON.parse(fs.readFileSync(f, 'utf8'));
-    if (j && j.version === 2 && j.keys) return j;
-  } catch (e) { /* missing */ }
-  return null;
+    const j = JSON.parse(text);
+    if (j && j.version === 2 && j.keys) return { state: 'ok', file: f, store: j };
+    return { state: 'corrupt', file: f, reason: '版本或结构与预期不符' };
+  } catch (e) {
+    return { state: 'corrupt', file: f, reason: '内容不是合法 JSON（可能被截断或损坏）' };
+  }
+}
+
+function readStore(file) {
+  const st = storeState(file);
+  return st.state === 'ok' ? st.store : null;
+}
+
+// ------------------------------------------------------------------ 轻量文件锁
+// UI 服务与命令行可能同时改同一个密钥库：没有锁的话，后写者会用它读到的旧快照
+// 覆盖先写者的结果（丢更新）。这里用同目录下的 .lock 文件做进程间互斥。
+function acquireFileLock(file, timeoutMs) {
+  const lock = file + '.lock';
+  const t0 = Date.now();
+  const limit = timeoutMs || 3000;
+  for (;;) {
+    try {
+      fs.writeFileSync(lock, String(process.pid), { flag: 'wx' });
+      return lock;
+    } catch (e) {
+      try {
+        const st = fs.statSync(lock);
+        if (Date.now() - st.mtimeMs > 10000) { fs.unlinkSync(lock); continue; }   // 陈旧锁：抢过来
+      } catch (e2) { /* 锁刚被释放，重试即可 */ }
+      if (Date.now() - t0 > limit) return null;
+      const until = Date.now() + 40;
+      while (Date.now() < until) { /* 同步忙等，避免引入异步依赖 */ }
+    }
+  }
+}
+function releaseFileLock(lock) {
+  try { fs.unlinkSync(lock); } catch (e) { /* 已释放 */ }
+}
+/** 在锁保护下做「读 → 改 → 写」。 */
+function mutateStore(file, fn) {
+  const f = file || secretFile();
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  const lock = acquireFileLock(f);
+  if (!lock) throw new Error('密钥库正被另一个进程占用（' + f + '.lock），请稍后重试');
+  try {
+    return fn();
+  } finally {
+    releaseFileLock(lock);
+  }
 }
 
 function writeStore(store, file) {
@@ -141,8 +192,17 @@ function writeStore(store, file) {
 function ensurePass(pass, file) {
   if (!pass) throw new Error('口令不能为空');
   const f = file || secretFile();
-  const store = readStore(f) || emptyStore();
+  const st = storeState(f);
+  if (st.state === 'corrupt') {
+    throw new Error('密钥库文件存在但读不出来（' + st.reason + '）：拒绝用新口令覆盖它，请先备份并排查 ' + st.file);
+  }
+  const store = st.state === 'ok' ? st.store : emptyStore();
   if (!store.verifier) {
+    // 有密钥却没有校验器 = 文件损坏。此时若用新口令重建校验器，旧密钥将永远解不开，
+    // 而校验器又会宣称新口令"正确"——这种静默的数据丢失必须拒绝。
+    if (Object.keys(store.keys || {}).length) {
+      throw new Error('密钥库缺少口令校验器但已经存有密钥：文件可能损坏，拒绝用新口令重建（否则旧密钥将再也解不开）');
+    }
     store.verifier = seal(VERIFY_PLAINTEXT, pass);
     writeStore(store, f);
   }
@@ -166,23 +226,29 @@ function setKey(siteId, secret, pass, opts) {
   if (!secret) throw new Error('密钥不能为空');
   const o = opts || {};
   const f = o.file || secretFile();
-  const store = ensurePass(pass, f);
-  if (!verifyPass(pass, f)) throw new Error('口令与本密钥库的校验器不匹配');
   const name = o.keyName || keyName();
-  store.keys[siteId] = Object.assign(seal(secret, pass, store.kdf_params), {
-    key_name: name, length: secret.length, created: new Date().toISOString(),
+  // 变量名会被真当成环境变量注入，非法名字（含空格、数字开头）必须当场拒绝
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error('密钥变量名不是合法的环境变量名：' + name);
+  return mutateStore(f, () => {
+    const store = ensurePass(pass, f);
+    if (!verifyPass(pass, f)) throw new Error('口令与本密钥库的校验器不匹配');
+    store.keys[siteId] = Object.assign(seal(secret, pass, store.kdf_params), {
+      key_name: name, length: secret.length, created: new Date().toISOString(),
+    });
+    writeStore(store, f);
+    return { siteId, keyName: name, length: secret.length, bytes: fs.statSync(f).size };
   });
-  writeStore(store, f);
-  return { siteId, keyName: name, length: secret.length, bytes: fs.statSync(f).size };
 }
 
 function removeKey(siteId, file) {
   const f = file || secretFile();
-  const store = readStore(f);
-  if (!store || !store.keys[siteId]) return false;
-  delete store.keys[siteId];
-  writeStore(store, f);
-  return true;
+  return mutateStore(f, () => {
+    const store = readStore(f);
+    if (!store || !store.keys[siteId]) return false;
+    delete store.keys[siteId];
+    writeStore(store, f);
+    return true;
+  });
 }
 
 /** 已保存的密钥清单（不含明文）。 */
@@ -203,20 +269,27 @@ function destroyStore(file) {
   try { fs.unlinkSync(f); return true; } catch (e) { return false; }
 }
 
-/** 用口令解开全部密钥。@returns { ok, keys: {siteId: 明文}, meta, reason } */
+/** 用口令解开全部密钥。@returns { ok, keys, meta, failed, reason } */
 function unlockAll(pass, file) {
-  const store = readStore(file);
-  if (!store) return { ok: false, reason: 'missing', keys: {} };
+  const st = storeState(file);
+  if (st.state === 'missing') return { ok: false, reason: 'missing', keys: {} };
+  if (st.state === 'corrupt') return { ok: false, reason: 'corrupt', keys: {}, error: st.reason, file: st.file };
+  const store = st.store;
   if (store.verifier && !verifyPass(pass, file)) return { ok: false, reason: 'badpass', keys: {} };
   const keys = {};
+  const failed = [];
   for (const id of Object.keys(store.keys)) {
     try {
       keys[id] = openSealed(store.keys[id], pass, store.kdf_params);
     } catch (e) {
-      return { ok: false, reason: 'badpass', keys: {} };
+      // 单条记录坏掉不该让整库看起来"口令错误"：逐条记录，能解多少算多少
+      failed.push(id);
     }
   }
-  return { ok: true, keys, meta: listKeys(file) };
+  if (!Object.keys(keys).length && failed.length) {
+    return { ok: false, reason: 'badpass', keys: {}, failed, meta: listKeys(file) };
+  }
+  return { ok: true, keys, meta: listKeys(file), failed };
 }
 
 /**
@@ -421,8 +494,9 @@ function cmdSelftest() {
 module.exports = {
   ROOT, SECRET_DIR, secretFile, legacyFile, keyName, currentKeyName, setKeyName,
   askHidden, promptPass, encrypt, decrypt, unlock,
-  emptyStore, readStore, writeStore, ensurePass, verifyPass, setKey, removeKey, listKeys,
+  emptyStore, readStore, storeState, writeStore, ensurePass, verifyPass, setKey, removeKey, listKeys,
   destroyStore, unlockAll, migrateLegacy, seal, openSealed,
+  mutateStore, acquireFileLock, releaseFileLock,
 };
 
 if (require.main === module) {

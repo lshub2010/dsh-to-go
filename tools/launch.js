@@ -161,6 +161,15 @@ async function resolveKey(env, opts) {
 
   const file = secretLib.secretFile();
   const legacy = secretLib.legacyFile();
+  // 「文件存在但读不出来」必须显式报出来，否则会被当成"还没配密钥"而静默跳过注入，
+  // 用户只能在 dsh 里看到 MISSING_CREDENTIAL，找不到真实原因
+  const stInfo = secretLib.storeState ? secretLib.storeState(file) : { state: 'missing' };
+  if (stInfo.state === 'corrupt') {
+    console.log('\n【启动器】密钥库文件存在但读不出来：' + (stInfo.reason || '内容损坏') + '（' + file + '）');
+    console.log('【启动器】已跳过密钥注入，dsh 会以 MISSING_CREDENTIAL 失败。');
+    console.log('【启动器】可以从 backups\\ 里找旧覆盖层/旧密钥文件恢复，或用 dsh-ui.cmd 重新设置密钥。');
+    return env;
+  }
   if (!fs.existsSync(file) && !fs.existsSync(legacy)) {
     console.log('\n【启动器】还没有配置加密密钥：' + file);
     console.log('【启动器】dsh 仍会启动，但模型请求会以 MISSING_CREDENTIAL 失败。');
@@ -191,8 +200,13 @@ async function resolveKey(env, opts) {
           (() => { const s = sitesState.sites.find((x) => x.keyEnv === name); return s ? r.meta.find((m) => m.siteId === s.id) : null; })();
         for (const name of names) {
           const meta = metaForName(name);
-          if (meta && r.keys[meta.siteId] != null) { env[name] = r.keys[meta.siteId]; injected++; }
-          else missing.push(name);
+          if (meta && r.keys[meta.siteId] !== undefined && r.keys[meta.siteId] !== null) {
+            env[name] = r.keys[meta.siteId];
+            injected++;
+          } else missing.push(name);
+        }
+        if (r.failed && r.failed.length) {
+          console.log('【启动器】有 ' + r.failed.length + ' 个站点的密钥解不开（记录可能损坏）：' + r.failed.join('、'));
         }
         // 补齐：新密钥库还没存的站点，看看旧的单密钥文件里有没有同一把钥匙
         // （否则「新存了一个站点」会让旧密钥突然失效——那是很难排查的坑）
@@ -214,6 +228,11 @@ async function resolveKey(env, opts) {
           console.log('【启动器】建议在图形配置页里把旧密钥导入新密钥库，之后就能只维护一个文件。');
         }
         log('keys unlocked injected=' + injected + ' legacy=' + filledFromLegacy + ' names=' + names.join(','));
+        return env;
+      }
+      if (r.reason === 'corrupt') {
+        console.log('\n【启动器】密钥库读不出来：' + (r.error || '内容损坏') + '（' + file + '）');
+        console.log('【启动器】已跳过密钥注入，请排查文件或用图形配置页重新设置。');
         return env;
       }
       console.log('\n【启动器】口令错误（' + attempt + '/3）');
@@ -278,6 +297,14 @@ async function main() {
     return 0;
   }
 
+  // 先把覆盖层按站点表刷新——必须在决定 --patch 参数之前：否则「站点表已配置但覆盖层
+  // 文件还不存在」的首次启动会判定为"没有覆盖层"而不加 --patch，配置被静默忽略到下次启动。
+  try {
+    fs.mkdirSync(DATA, { recursive: true });
+    fs.mkdirSync(TMP, { recursive: true });
+  } catch (e) { /* 目录建不出来时后面会报更具体的错 */ }
+  if (refreshOverlay()) log('overlay refreshed');
+
   // The relay/self-hosted site overlay goes in through dsh's own --patch flag.
   // Argument order matters: the profile must be given as `--profile <name>` (or as
   // argv[0]); a launcher flag placed *before* a bare command name makes dsh answer
@@ -303,9 +330,6 @@ async function main() {
 
   fs.mkdirSync(DATA, { recursive: true });
   fs.mkdirSync(TMP, { recursive: true });
-  const overlay = refreshOverlay();
-  if (overlay) log('overlay refreshed: ' + overlay);
-
   const env = await resolveKey(buildEnv(), { noKey: argv.includes('--no-key') });
   const label = '活动槽 ' + slot + ' ｜ dsh ' + dshVersion(slot) + ' ｜ 数据目录 ' + DATA;
   console.log('【启动器】' + label);

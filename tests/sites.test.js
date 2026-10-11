@@ -30,7 +30,7 @@ test('normalizeSite：校验与补全', () => {
   assert.strictEqual(s.enabled, true);
   assert.strictEqual(s.models.length, 2);
   assert.strictEqual(s.models[1].image, true);
-  assert.ok(s.compat, '默认应当带兼容修正');
+  assert.strictEqual(s.compat, null, '未显式配置 compat 时不应带兼容修正');
 
   assert.throws(() => S.normalizeSite({ id: 'Bad_ID', baseURL: 'https://x/v1', models: [{ id: 'm' }] }), /站点 ID/);
   assert.throws(() => S.normalizeSite({ id: 'ok', baseURL: 'ftp://x', models: [{ id: 'm' }] }), /http/);
@@ -150,6 +150,35 @@ test('停用清单里带我们自己的条目 id：必须过滤掉（否则会�
   const full = S.buildOverlay(S.setDefault(st, 'a', 'ma'), { disabled: ['agent-default-model'] });
   assert.strictEqual(full.split('\n').filter((l) => l.trim() === '- id: agent-default-model').length, 1);
   assert.match(yml, /- id: ui-theme\n  disabled: true/);
+});
+
+test('compat：未配置时不要写 compat（不替用户改 dsh 的默认行为）', () => {
+  const off = S.normalizeSite({ id: 'n1', baseURL: 'https://n/v1', models: [{ id: 'm' }] });
+  assert.strictEqual(off.compat, null, 'undefined 视为未配置');
+  assert.strictEqual(S.normalizeSite({ id: 'n2', baseURL: 'https://n/v1', models: [{ id: 'm' }], compat: false }).compat, null);
+  const on = S.normalizeSite({ id: 'n3', baseURL: 'https://n/v1', models: [{ id: 'm' }], compat: true });
+  assert.deepStrictEqual(on.compat, { supportsDeveloperRole: false, maxTokensField: 'max_tokens' });
+  const custom = S.normalizeSite({ id: 'n4', baseURL: 'https://n/v1', models: [{ id: 'm' }], compat: { supportsDeveloperRole: true, maxTokensField: 'max_completion_tokens' } });
+  assert.deepStrictEqual(custom.compat, { supportsDeveloperRole: true, maxTokensField: 'max_completion_tokens' });
+
+  const st = S.upsert(S.emptyState(), { id: 'n1', baseURL: 'https://n/v1', models: [{ id: 'm' }] });
+  assert.ok(!/compat:/.test(S.buildOverlay(st)), '没配 compat 就不该出现在覆盖层里');
+});
+
+test('writeOverlay：内容没变就不重写、也不备份（避免每次启动都往 backups 塞文件）', () => {
+  const dir = fs.mkdtempSync(path.join(TMP, 'ovl-'));
+  const prev = process.env.WZD_DATA_DIR;
+  const one = S.upsert(S.emptyState(), { id: 'ov', baseURL: 'https://ov/v1', models: [{ id: 'm' }] });
+  const first = S.writeOverlay(one);
+  assert.strictEqual(first.unchanged, false, '首次生成');
+  const second = S.writeOverlay(one);
+  assert.strictEqual(second.unchanged, true, '内容相同应跳过写入');
+  assert.strictEqual(second.backup, null, '没变就不该产生备份');
+  // 停用站点让内容变化 → 这次应当有备份
+  const changed = S.upsert(one, { id: 'ov', baseURL: 'https://ov/v1', models: [{ id: 'm' }], enabled: false });
+  const third = S.writeOverlay(changed);
+  assert.strictEqual(third.unchanged, false);
+  assert.ok(third.backup && fs.existsSync(third.backup), '内容变了应当先备份：' + third.backup);
 });
 
 test('writeOverlay：写文件并回报路径', () => {

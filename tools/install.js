@@ -52,6 +52,12 @@ function parseArgs(argv) {
   }
   if (!(o.port > 0 && o.port < 65536)) { console.log('  端口不合法：' + o.port); process.exit(2); }
   if (o.slot && !/^agent-[AB]$/.test(o.slot)) { console.log('  槽名只能是 agent-A 或 agent-B：' + o.slot); process.exit(2); }
+  // --version 只有和 --slot 搭配才有意义：单独给会被静默忽略，用户会以为装的是指定版本
+  if (o.version && !o.slot) {
+    console.log('  --version 只与 --slot 搭配使用（例：--slot agent-B --version 0.2.1-alpha.2）。');
+    console.log('  要一次装两个槽请用 --a <版本> 与 --b <版本>。');
+    process.exit(2);
+  }
   return o;
 }
 
@@ -151,12 +157,14 @@ function main() {
     }
   }
 
-  // 活动槽：没装过就默认 A；指定 --slot 时若还没有记录则用它；已有记录且未 --force 则保持
+  // 活动槽：没装过就默认 A；指定 --slot 时若还没有记录则用它；
+  // 已有记录时只有「那个槽里确实装着 dsh」才保留（否则会指向一个空槽/旧槽）
   let active = 'agent-A';
   if (opt.slot && !fs.existsSync(SLOT_FILE)) active = opt.slot;
   if (fs.existsSync(SLOT_FILE) && !opt.force) {
     const cur = fs.readFileSync(SLOT_FILE, 'utf8').trim();
-    if (/^agent-[AB]$/.test(cur)) active = cur;
+    if (/^agent-[AB]$/.test(cur) && installedVersion(cur)) active = cur;
+    else if (/^agent-[AB]$/.test(cur)) say('原来的活动槽 ' + cur + ' 里没有可用的 dsh，活动槽改为 ' + active);
   }
   fs.writeFileSync(SLOT_FILE, active + '\n', 'utf8');
   // 端口只在「显式指定」或「还没有记录」时才写：后台安装任务（jobs 的 install-slot）不带

@@ -8,6 +8,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-to-go-jobs-'));
 process.env.WZD_DATA_DIR = path.join(TMP, 'data');
@@ -201,11 +202,20 @@ test('回滚：原本没装过的槽失败后清掉半成品，原本有 dsh 的
   assert.strictEqual(keep.rolledBack, false);
 });
 
-test('阶段提示：能从日志行里认出关键阶段', () => {
-  assert.strictEqual(J.guessStage('  尝试 npmjs 官方源'), '从 npm 下载安装');
-  assert.strictEqual(J.guessStage('  安装到 agent-A ← npmjs 官方源（第一次要几分钟）'), '从 npm 下载安装');
+test('阶段提示：模式必须对齐子进程的真实文案', () => {
+  // 这些字符串直接抄自 install.js 的实际输出
+  assert.strictEqual(J.guessStage('  便携 Node：v26.7.0'), '准备运行环境');
+  assert.strictEqual(J.guessStage('    尝试 npmjs 官方源'), '从 npm 下载安装');
+  assert.strictEqual(J.guessStage('  安装到 agent-A ← npmjs 官方源（第一次要几分钟，请勿关窗）'), '从 npm 下载安装');
+  assert.strictEqual(J.guessStage('    npmjs 官方源 失败：ERR! code E404'), '换源重试');
   assert.strictEqual(J.guessStage('  完成：agent-A ← dsh 0.2.1-alpha.2（136 秒）'), '安装完成');
   assert.strictEqual(J.guessStage('这东西不认识'), null);
+});
+
+test('install.js 参数校验：--version 单独给会被拒绝（而不是静默装默认版本）', () => {
+  const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'tools', 'install.js'), '--version', '1.2.3'], { encoding: 'utf8' });
+  assert.strictEqual(r.status, 2, String(r.stdout || '') + String(r.stderr || ''));
+  assert.match(String(r.stdout), /--version 只与 --slot 搭配/);
 });
 
 test('取消与中断识别的竞态：被取消的任务不该被报成「崩溃」', async () => {

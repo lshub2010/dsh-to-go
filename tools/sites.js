@@ -70,11 +70,14 @@ function normalizeSite(site) {
     keyEnv,
     enabled: s.enabled !== false,
     models,
-    compat: s.compat === null || s.compat === false ? null
-      : {
-        supportsDeveloperRole: (s.compat && s.compat.supportsDeveloperRole === true) ? true : false,
-        maxTokensField: (s.compat && s.compat.maxTokensField) || 'max_tokens',
-      },
+    // compat 只在「显式配置」时才产出：undefined 视为未配置（不要替用户做决定、也不要覆盖
+    // dsh 的默认行为）；null / false 同样表示不要兼容修正。
+    compat: (s.compat === true || (s.compat && typeof s.compat === 'object'))
+      ? {
+        supportsDeveloperRole: s.compat.supportsDeveloperRole === true,
+        maxTokensField: s.compat.maxTokensField || 'max_tokens',
+      }
+      : null,
     updated: new Date().toISOString(),
   };
   if (s.reasoning) out.reasoning = String(s.reasoning);
@@ -233,21 +236,24 @@ function buildOverlay(state, opts) {
   return L.join('\n') + '\n';
 }
 
-/** 写覆盖层（先备份旧文件）。返回 { overlay, backup }。 */
+/** 写覆盖层（内容没变就不写、也不备份；变了才先备份旧文件）。返回 { overlay, backup, text, unchanged }。 */
 function writeOverlay(state, opts) {
   fs.mkdirSync(DATA, { recursive: true });
+  const text = buildOverlay(state, opts);
+  let prev = null;
+  try { prev = fs.readFileSync(OVERLAY, 'utf8'); } catch (e) { /* 首次生成 */ }
+  if (prev === text) return { overlay: OVERLAY, backup: null, text, unchanged: true };
   let backup = null;
-  if (fs.existsSync(OVERLAY)) {
+  if (prev !== null) {
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     backup = path.join(BACKUP_DIR, 'overlay-' + stamp + '.yml');
     fs.copyFileSync(OVERLAY, backup);
   }
-  const text = buildOverlay(state, opts);
   const tmp = OVERLAY + '.tmp';
   fs.writeFileSync(tmp, text, 'utf8');
   fs.renameSync(tmp, OVERLAY);
-  return { overlay: OVERLAY, backup, text };
+  return { overlay: OVERLAY, backup, text, unchanged: false };
 }
 
 /**

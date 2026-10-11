@@ -175,6 +175,68 @@ test('migrateLegacy：目标站点已有密钥时不静默覆盖', () => {
   assert.strictEqual(Sec.unlockAll(PASS, newFile).keys['ibao'], 'sk-from-legacy');
 });
 
+test('密钥库损坏：绝不能被当成「还没有库」而覆盖', () => {
+  const dir = fs.mkdtempSync(path.join(TMP, 'corrupt-'));
+  const f = path.join(dir, 'keys.enc');
+  fs.writeFileSync(f, '{ 这不是 JSON', 'utf8');
+  assert.strictEqual(Sec.storeState(f).state, 'corrupt');
+  assert.throws(() => Sec.ensurePass(PASS, f), /读不出来|损坏/);
+  assert.throws(() => Sec.setKey('x', 'sk-x', PASS, { file: f }), /读不出来|损坏/);
+  assert.strictEqual(fs.readFileSync(f, 'utf8'), '{ 这不是 JSON', '损坏的文件必须原封不动');
+  const un = Sec.unlockAll(PASS, f);
+  assert.strictEqual(un.ok, false);
+  assert.strictEqual(un.reason, 'corrupt');
+
+  // 版本不对也算损坏
+  const f2 = path.join(dir, 'keys2.enc');
+  fs.writeFileSync(f2, JSON.stringify({ version: 1, ct: 'x' }), 'utf8');
+  assert.strictEqual(Sec.storeState(f2).state, 'corrupt');
+});
+
+test('有密钥却没有口令校验器：拒绝用新口令重建（否则旧密钥永远解不开）', () => {
+  const dir = fs.mkdtempSync(path.join(TMP, 'noverif-'));
+  const f = path.join(dir, 'keys.enc');
+  // 先正常建库，再手工删掉 verifier 模拟损坏
+  Sec.setKey('a', 'sk-a', PASS, { file: f });
+  const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+  delete j.verifier;
+  fs.writeFileSync(f, JSON.stringify(j, null, 2), 'utf8');
+  assert.throws(() => Sec.ensurePass('别的口令', f), /校验器/);
+  assert.throws(() => Sec.ensurePass(PASS, f), /校验器/);
+  const keysNow = JSON.parse(fs.readFileSync(f, 'utf8')).keys;
+  assert.ok(keysNow.a, '原有密钥必须还在');
+});
+
+test('unlockAll：单条记录损坏时能解多少算多少，并回报 failed', () => {
+  const dir = fs.mkdtempSync(path.join(TMP, 'partial-'));
+  const f = path.join(dir, 'keys.enc');
+  Sec.setKey('good', 'sk-good-value', PASS, { file: f });
+  Sec.setKey('bad', 'sk-bad-value', PASS, { file: f });
+  const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+  j.keys.bad.ct = Buffer.from('corrupted-not-a-real-ciphertext').toString('base64');
+  fs.writeFileSync(f, JSON.stringify(j, null, 2), 'utf8');
+
+  const un = Sec.unlockAll(PASS, f);
+  assert.strictEqual(un.ok, true, '还有能解开的密钥就应算成功');
+  assert.strictEqual(un.keys.good, 'sk-good-value');
+  assert.deepStrictEqual(un.failed, ['bad'], '坏掉的那条要单独报出来');
+});
+
+test('setKey：非法变量名必须当场拒绝', () => {
+  const dir = fs.mkdtempSync(path.join(TMP, 'badenv-'));
+  const f = path.join(dir, 'keys.enc');
+  assert.throws(() => Sec.setKey('ok-id', 'sk-x', PASS, { file: f, keyName: '1BAD' }), /环境变量名/);
+  assert.throws(() => Sec.setKey('ok-id', 'sk-x', PASS, { file: f, keyName: 'has space' }), /环境变量名/);
+  assert.strictEqual(fs.existsSync(f), false, '被拒的写入不该留下文件');
+});
+
+test('写锁：正常写入后不留 .lock 残留', () => {
+  const dir = fs.mkdtempSync(path.join(TMP, 'lock-'));
+  const f = path.join(dir, 'keys.enc');
+  Sec.setKey('a', 'sk-a', PASS, { file: f });
+  assert.strictEqual(fs.existsSync(f + '.lock'), false, '.lock 应当被释放');
+});
+
 test('CLI selftest 退出码为 0', () => {
   const r = spawnSync(process.execPath, [path.join(__dirname, '..', 'tools', 'secret.js'), 'selftest'], {
     encoding: 'utf8',

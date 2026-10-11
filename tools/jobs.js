@@ -245,7 +245,12 @@ function releaseLockIfStale() {
   const holder = readLock();
   if (!holder) return;
   const m = readMeta(holder);
-  if (!m || m.status !== 'running' || !pidAlive(m.pid)) {
+  // 排队中（queued）也是"正在进行"：它刚建好、马上要跑，锁不能被别人收走
+  const active = !!m && (
+    m.status === 'running' ? pidAlive(m.pid)
+      : m.status === 'queued' ? (Date.now() - Date.parse(m.createdAt || 0)) < QUEUED_GRACE_MS
+        : false);
+  if (!active) {
     try { fs.unlinkSync(LOCK); } catch (e) { /* 已释放 */ }
   }
 }
@@ -320,15 +325,16 @@ function pruneOld() {
   }
 }
 
-/** 猜当前阶段（供界面显示；不做假的百分比）。 */
+/** 猜当前阶段（供界面显示；模式对齐子进程的**真实**文案，不做假的百分比）。 */
 function guessStage(line) {
   const l = String(line);
-  if (/便携 Node 就绪/.test(l)) return '准备运行环境';
-  if (/尝试 npmjs|尝试 npmmirror|正在安装到|安装到 agent-/.test(l)) return '从 npm 下载安装';
-  if (/完成：agent-/.test(l)) return '安装完成';
-  if (/启动检查|校验/.test(l)) return '安装后检查';
-  if (/切换|活动槽已切到/.test(l)) return '切换活动槽';
-  if (/失败|error|ERR!/.test(l)) return '出错';
+  if (/便携 Node[：:]/.test(l)) return '准备运行环境';
+  if (/正在安装到|安装到 agent-|尝试 npmjs|尝试 npmmirror/.test(l)) return '从 npm 下载安装';
+  if (/官方源 失败|镜像源 失败|换源/.test(l)) return '换源重试';
+  if (/完成：agent-|全部完成/.test(l)) return '安装完成';
+  if (/启动检查|--version|校验/.test(l)) return '安装后检查';
+  if (/活动槽已切到|指针/.test(l)) return '切换活动槽';
+  if (/失败|error|ERR!|错误/.test(l)) return '出错';
   return null;
 }
 
@@ -444,10 +450,29 @@ async function startJob(kind, opts) {
   const r = await runJob(c.job.id);
   return r;
 }
+/** 后台任务崩溃兜底：异常绝不能逃逸出去（网页服务要长期存活）。 */
+function markJobCrashed(id, e) {
+  try {
+    const m = readMeta(id) || { id, kind: 'custom', label: '未知任务', opts: {} };
+    m.status = 'failed';
+    m.message = '后台执行出错：' + ((e && e.message) || e);
+    m.endedAt = nowIso();
+    writeMeta(m);
+    appendLog(id, '\n=== 后台执行出错：' + ((e && e.stack) || e) + ' ===\n');
+    releaseLock(id);
+  } catch (e2) { /* 兜底里再出错就只能放弃 */ }
+}
+
 function spawnJob(kind, opts) {
   const c = createJob(kind, opts);
   if (!c.ok) return c;
-  setTimeout(() => { runJob(c.job.id); }, 0);   // 立刻返回，任务在后台跑
+  setTimeout(() => {
+    try {
+      Promise.resolve(runJob(c.job.id)).catch((e) => markJobCrashed(c.job.id, e));
+    } catch (e) {
+      markJobCrashed(c.job.id, e);
+    }
+  }, 0);   // 立刻返回，任务在后台跑
   return c;
 }
 
