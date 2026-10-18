@@ -262,6 +262,13 @@ namespace DshToGo
                 "dsh-to-go-activate-" + key);
 
             Text = Program.AppTitle;            // fixed; never contains the token
+            // 图标 = dsh 官方 Windows 图标（assets\app.ico，由 tools/launcher/make-icon.js 从官方 SVG 生成）
+            try
+            {
+                string ico = Path.Combine(root, "assets", "app.ico");
+                if (File.Exists(ico)) Icon = new Icon(ico);
+            }
+            catch (Exception) { /* 图标缺失不该阻止启动 */ }
             Size = new Size(1200, 840);
             StartPosition = FormStartPosition.CenterScreen;
             MinimumSize = new Size(880, 620);

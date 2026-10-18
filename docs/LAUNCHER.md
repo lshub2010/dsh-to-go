@@ -120,5 +120,9 @@
 
 ## 备注
 
+- **图标**：`assets/app.ico`（16/24/32/48/64/128/256 七帧）由 `tools/launcher/make-icon.js` 从
+  `assets/app-icon.svg` 栅格化生成；那个 SVG 是 **DeepSeek Harness 官方 Windows 图标**
+  （来源 `deepseek-ai/deepseek-harness` 的 `apps/desktop/resources/icon-windows.svg`，MIT，出处写在 SVG 注释里）。
+  要换图标就换 SVG 再重跑 `make-icon.js` + `build-launcher.cmd`（已带 `/win32icon`），不要自己画替代品。
 - 仓库的提交约定（`AGENTS.md` §11）不变：短命分支 + Conventional Commits + PR 合 `main`。
 - 本次工作是**多会话量级**，按 `.scratch/launcher/issues/` 的六棒推进，每棒独立 review，父代理跑最终全量验收。
