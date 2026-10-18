@@ -433,13 +433,16 @@ async function handleApi(req, res, url) {
   if (bodyText) { try { body = JSON.parse(bodyText); } catch (e) { return send(400, { error: '请求体不是合法 JSON' }); } }
 
   const p = url.pathname;
-  // 需要「已输入口令」才允许的写操作：碰密钥、跑安装/插件、启停进程。
+  // 需要「已输入口令」才允许的写操作：碰密钥、跑安装/插件、启停进程，
+  // 以及改站点表 / 删站点（可连带删密钥）/ 切活动槽 / 重建覆盖层。
+  // 下面这一行只拦 POST：GET /api/sites 读站点不需要解锁。
   // 端口/临时目录这类不碰密钥的设置不在此列。
   const NEEDS_LOGIN = ['/api/key', '/api/key/clear', '/api/keys/migrate', '/api/site', '/api/site/clear',
     '/api/upgrade', '/api/jobs/install', '/api/jobs/upgrade', '/api/jobs/pnpm', '/api/jobs/cancel', '/api/drive-lost/clear',
     '/api/market/refresh',
     '/api/plugins/toggle', '/api/plugins/install', '/api/plugins/uninstall', '/api/plugins/allow-version',
     '/api/plugins/pnpm-setup',
+    '/api/sites', '/api/sites/delete', '/api/slot/switch', '/api/overlay/rebuild',
     '/api/dsh/start', '/api/dsh/stop', '/api/backup'];
   if (req.method === 'POST' && NEEDS_LOGIN.indexOf(p) >= 0 && !requireLogin()) {
     return send(401, { error: '需要先输入口令解锁（口令只存在本服务的内存里）' });
