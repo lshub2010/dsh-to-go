@@ -10,6 +10,7 @@
 /* 设计基线来自 ui-ux-pro-max 的 Dark Mode (OLED)：深色优先、低发白、高对比。
    字体只用系统自带（U 盘可能离线，不能依赖外链字体）。 */
 :root{
+  color-scheme:dark;
   --bg:#0F172A; --card:#1B2336; --card-2:#151D2E; --primary:#1E293B; --secondary:#334155;
   --fg:#F8FAFC; --muted:#94A3B8; --border:#475569; --accent:#22C55E; --on-accent:#0F172A;
   --danger:#EF4444; --warn:#F59E0B; --code:#0B1220;
@@ -46,7 +47,7 @@ nav button{display:flex;align-items:center;gap:6px;min-height:40px;background:tr
   color:var(--muted);padding:8px 14px;border-radius:var(--r);transition:background var(--t-fast) var(--e-out),color var(--t-fast) var(--e-out),border-color var(--t-fast) var(--e-out)}
 nav button:hover{background:var(--primary);color:var(--fg)}
 nav button[aria-selected="true"]{background:var(--primary);border-color:var(--border);color:var(--fg);font-weight:600}
-main{padding:18px 20px 80px;max-width:1080px;margin:0 auto}
+main{padding:22px 40px 84px;max-width:none;margin:0}
 section[hidden]{display:none}
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;margin-bottom:var(--gap)}
 .card.tight{padding:12px 14px}
@@ -168,7 +169,7 @@ details.more > .body .ln{display:block}
 #banner[hidden]{display:none}
 #banner.danger{background:rgba(239,68,68,.18)}
 #banner .b-t{font-weight:600;margin-right:4px}
-#banner code{background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;font-size:12px;font-family:var(--font-mono)}
+#banner code{background:var(--banner-code-bg);padding:1px 5px;border-radius:4px;font-size:12px;font-family:var(--font-mono)}
 /* 插件卡片 */
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
 .pcard{display:flex;gap:12px;padding:12px;border:1px solid var(--border);border-radius:var(--r);background:var(--card-2)}
@@ -192,6 +193,24 @@ details.more > .body .ln{display:block}
 .pv{max-height:78vh;overflow:auto;width:min(760px,92vw)}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin-top:10px;font-size:13px}
 .kv .k{color:var(--muted);white-space:nowrap}
+
+
+/* ===========================================================================
+   浅色主题（html[data-theme="light"]）
+   只有一个 :root 常量表，所以换肤＝覆盖这套变量；组件样式一行都不用改。
+   标题栏同步由启动器负责（页面发 dsh.theme 消息，壳把 DWM 颜色也跟着换）。
+   =========================================================================== */
+html[data-theme="light"]{
+  color-scheme:light;
+  --bg:#F3F5F9; --card:#FFFFFF; --card-2:#F7F9FC; --primary:#E9EEF6; --secondary:#DCE3EC;
+  --fg:#101828; --muted:#5B6878; --border:#C9D2DE; --accent:#15803D; --on-accent:#FFFFFF;
+  --danger:#DC2626; --warn:#B45309; --code:#F1F5F9;
+  --banner-code-bg:rgba(15,23,42,.07);
+}
+/* 浅色下阴影要更实一点，否则白卡片在白底上没有层次 */
+html[data-theme="light"] .card{box-shadow:0 1px 2px rgba(16,24,40,.06)}
+html[data-theme="light"] .pill.ok{border-color:rgba(21,128,61,.45)}
+html[data-theme="light"] .dot.on{box-shadow:0 0 6px rgba(21,128,61,.5)}
 
 /* ===== Fluent 2 主题（third_party/fluent/fluent-theme.css）===== */
 /* Fluent 2 (Web) dark theme tokens for dsh-to-go.
@@ -746,8 +765,18 @@ html, body { background: var(--colorNeutralBackground3); color: var(--colorNeutr
 header {
   background: var(--colorNeutralBackground2);
   border-bottom: 1px solid var(--colorNeutralStroke3);
-  padding: 10px 20px;
+  /* 顶栏＝标题栏：一条 44px 的横条，左侧应用信息、右侧操作与窗口按钮。
+     高度必须和 DshLauncher.cs 的 TitleBarHeight 一致。
+     这里必须 nowrap：否则窗口变窄时 legacy.css 的 flex-wrap:wrap 会让它折成两行。 */
+  padding: 0 0 0 14px;
   gap: 12px;
+  height: 44px;
+  min-height: 44px;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
 }
 header h1 {
   font-size: var(--fontSizeBase400);
@@ -929,12 +958,306 @@ fluent-badge[appearance="accent"] { --accent-foreground-rest: var(--colorBrandFo
 /* hidden 必须真的隐藏：老样式里 .btn{display:inline-flex} 这类规则会盖掉 UA 的 [hidden] */
 [hidden] { display: none !important; }
 
+
+/* ---- 浅色：官方 webLightTheme 取值，覆盖上面 :root 的深色令牌 ---- */
+html[data-theme="light"] {
+  --colorNeutralBackground1: #ffffff;
+  --colorNeutralBackground2: #fafafa;
+  --colorNeutralBackground3: #f5f5f5;
+  --colorNeutralBackground4: #f0f0f0;
+  --colorNeutralForeground1: #242424;
+  --colorNeutralForeground2: #424242;
+  --colorNeutralForeground3: #616161;
+  --colorNeutralForeground4: #707070;
+  --colorNeutralStroke1: #d1d1d1;
+  --colorNeutralStroke2: #e0e0e0;
+  --colorNeutralStroke3: #f0f0f0;
+  --colorNeutralStrokeAccessible: #616161;
+  --colorBrandBackground: #0f6cbd;
+  --colorBrandBackgroundHover: #115ea3;
+  --colorBrandForeground1: #0f6cbd;
+  --colorBrandStroke1: #0f6cbd;
+  --colorStatusSuccessForeground1: #0e700e;
+  --colorStatusDangerForeground1: #b10e1c;
+  --colorStatusDangerBackground1: #fdf3f4;
+  --colorStatusWarningForeground1: #bc4b09;
+}
+
+/* 解锁状态是「状态」不是「操作」：跟标题同排，做成小一号的 chip，
+   右侧 hdr-actions 里只剩按钮，避免药丸夹在按钮中间、大小还不一致。 */
+header h1 .pill {
+  font-size: var(--fontSizeBase200);
+  padding: 1px 8px;
+  margin-left: 2px;
+  color: var(--colorNeutralForeground3);
+}
+header h1 .pill.ok { color: var(--accent); }
+header .hdr-actions { align-items: center; }
+header .hdr-actions .btn { min-height: 32px; }
+
+/* ---- 窗口按钮（只在启动器宿主里显示）---- */
+header .hdr-actions { padding-right: 0; gap: 6px; }
+.tb-ctl { display: flex; height: 44px; margin: 0; }
+.tb-ctl[hidden] { display: none !important; }
+.tb-ctl { gap: 0; padding: 0; }
+.tb-ctl button {
+  width: 46px; height: 44px; display: grid; place-items: center;
+  border: 0; background: transparent; color: var(--colorNeutralForeground1);
+  cursor: default; padding: 0; border-radius: 0;
+}
+.tb-ctl button:hover { background: var(--colorNeutralBackground1); }
+.tb-ctl button:active { background: var(--colorNeutralBackground3); }
+.tb-ctl #tb-close:hover { background: #c42b1c; color: #fff; }
+.tb-ctl #tb-close:active { background: #a32219; }
+.tb-ctl #tb-close:active { background: #a32219; color: #fff; }
+.tb-ctl .i-restore { display: none; }
+.tb-ctl #tb-max[data-max="1"] .i-max { display: none; }
+.tb-ctl #tb-max[data-max="1"] .i-restore { display: block; }
+
+/* ---- 滚动条：细、圆角、跟随主题，不再用系统那条浅灰粗条 ---- */
+* { scrollbar-width: thin; scrollbar-color: var(--colorNeutralStroke2) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--colorNeutralStroke2);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--colorNeutralStroke1); background-clip: content-box; }
+::-webkit-scrollbar-thumb:active { background: var(--colorNeutralForeground4); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---- 滚动容器 ----
+   让滚动条只出现在内容区：否则页面级滚动条会从标题栏右边一路贯穿上去，
+   顶栏里那三颗窗口按钮旁边就多出一根浅灰粗条（很难看）。
+   body 用纵向 flex：header / nav 固定，main 自己滚。 */
+html, body { height: 100%; overflow: hidden; }
+body { display: flex; flex-direction: column; }
+header, nav { flex: 0 0 auto; }
+main { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; }
+/* 弹层（登录/任务详情）本来就 fixed，不受影响 */
+
+/* 布局自适应由各分区自己的 <style> 处理（它们的 ID 选择器优先级更高） */
+
+/* ---- 窗口变窄时不能"塌成两行" ----
+   1) 菜单栏：永远单行，放不下就横向滚动（不换行、不叠行）；
+   2) 顶栏：标题固定，说明文字可省略号截断，右侧按钮不放宽。 */
+nav { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+nav::-webkit-scrollbar { display: none; }
+nav button { flex: 0 0 auto; }
+header h1 { flex: 1 1 auto; min-width: 0; }
+header h1 .app-title { flex: 0 0 auto; }
+header h1 .sub { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+header h1 .pill { flex: 0 0 auto; }
+header .hdr-actions { flex: 0 0 auto; }
+
+/* ===== 外观层（src/appearance.css）：流体背景 / 主色 / 动效 ===== */
+/* ===========================================================================
+   外观层（src/appearance.css）
+   1) 流体渐变背景（可关）
+   2) 主色 / 动效强度（可切换，存 data/ui-prefs.json）
+   3) 全局过渡与微动效（跟随"动效"设置）
+   =========================================================================== */
+
+/* ---------- 流体渐变背景：两块缓慢漂移的模糊色斑 ---------- */
+body::before,
+body::after {
+  content: '';
+  position: fixed;
+  inset: -40%;
+  z-index: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+body::before {
+  background:
+    radial-gradient(46% 52% at 20% 24%, color-mix(in srgb, var(--accent) 42%, transparent), transparent 68%),
+    radial-gradient(40% 46% at 80% 16%, color-mix(in srgb, var(--accent-2) 38%, transparent), transparent 70%),
+    radial-gradient(34% 40% at 50% 50%, color-mix(in srgb, var(--accent-3) 22%, transparent), transparent 72%);
+  filter: blur(64px) saturate(125%);
+  opacity: .72;
+  animation: bg-float-a 26s ease-in-out infinite alternate;
+}
+body::after {
+  background:
+    radial-gradient(42% 48% at 72% 82%, color-mix(in srgb, var(--accent-3) 40%, transparent), transparent 70%),
+    radial-gradient(36% 42% at 22% 74%, color-mix(in srgb, var(--accent-2) 30%, transparent), transparent 72%);
+  filter: blur(72px) saturate(120%);
+  opacity: .62;
+  animation: bg-float-b 34s ease-in-out infinite alternate;
+}
+@keyframes bg-float-a {
+  from { transform: translate3d(-2%, -1%, 0) scale(1); }
+  to   { transform: translate3d(3%, 2%, 0) scale(1.12); }
+}
+@keyframes bg-float-b {
+  from { transform: translate3d(2%, 1%, 0) scale(1.06); }
+  to   { transform: translate3d(-3%, -2%, 0) scale(1); }
+}
+/* 内容必须在色斑之上 */
+header, nav, main { position: relative; z-index: 1; }
+
+/* 背景关掉时只剩纯色 */
+html[data-bg="solid"] body::before,
+html[data-bg="solid"] body::after { display: none; }
+
+/* ---------- 主色预设（只换令牌，不动组件样式） ---------- */
+:root {
+  --accent: #22C55E; --on-accent: #0F172A;
+  --accent-2: #6366F1; --accent-3: #06B6D4;
+}
+html[data-theme="light"] {
+  --accent: #15803D; --on-accent: #FFFFFF;
+  --accent-2: #4F46E5; --accent-3: #0E7490;
+}
+html[data-accent="green"]  { --accent: #22C55E; --accent-2: #6366F1; --accent-3: #06B6D4; --on-accent: #0F172A; }
+html[data-accent="blue"]   { --accent: #3B82F6; --accent-2: #06B6D4; --accent-3: #8B5CF6; --on-accent: #04121F; }
+html[data-accent="purple"] { --accent: #A855F7; --accent-2: #6366F1; --accent-3: #EC4899; --on-accent: #12061F; }
+html[data-accent="orange"] { --accent: #F59E0B; --accent-2: #EF4444; --accent-3: #F97316; --on-accent: #1B0F02; }
+html[data-accent="cyan"]   { --accent: #06B6D4; --accent-2: #22C55E; --accent-3: #3B82F6; --on-accent: #03151A; }
+html[data-theme="light"][data-accent="green"]  { --accent: #15803D; --on-accent: #FFFFFF; }
+html[data-theme="light"][data-accent="blue"]   { --accent: #1D4ED8; --on-accent: #FFFFFF; }
+html[data-theme="light"][data-accent="purple"] { --accent: #7E22CE; --on-accent: #FFFFFF; }
+html[data-theme="light"][data-accent="orange"] { --accent: #B45309; --on-accent: #FFFFFF; }
+html[data-theme="light"][data-accent="cyan"]   { --accent: #0E7490; --on-accent: #FFFFFF; }
+
+/* ---------- 主题切换本身也做过渡（换肤不要"啪"地跳） ---------- */
+html, body, header, nav, .card, input, select, textarea, .btn, .pill, th, td, pre, code {
+  transition: background-color 220ms cubic-bezier(.22,.61,.36,1),
+              border-color 220ms cubic-bezier(.22,.61,.36,1),
+              color 220ms cubic-bezier(.22,.61,.36,1);
+}
+
+/* ---------- 把过渡补齐：按钮 / 输入 / 标签 / 行 / 折叠 ---------- */
+.btn {
+  transition: background-color 140ms cubic-bezier(.22,.61,.36,1),
+              border-color 140ms cubic-bezier(.22,.61,.36,1),
+              color 140ms cubic-bezier(.22,.61,.36,1),
+              box-shadow 180ms cubic-bezier(.22,.61,.36,1),
+              transform 140ms cubic-bezier(.22,.61,.36,1);
+}
+.btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+.btn:active:not(:disabled) { transform: translateY(0) scale(.985); box-shadow: none; }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.06); box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent); }
+
+input, select, textarea {
+  transition: border-color 140ms cubic-bezier(.22,.61,.36,1),
+              box-shadow 160ms cubic-bezier(.22,.61,.36,1),
+              background-color 140ms cubic-bezier(.22,.61,.36,1);
+}
+input:hover:not(:disabled), select:hover:not(:disabled), textarea:hover:not(:disabled) { border-color: var(--secondary); }
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+nav button {
+  position: relative;
+  transition: color 140ms, background-color 140ms, border-color 140ms;
+}
+nav button::after {
+  content: '';
+  position: absolute;
+  left: 14px; right: 14px; bottom: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 220ms cubic-bezier(.22,.61,.36,1);
+}
+nav button[aria-selected="true"]::after { transform: scaleX(1); }
+
+.pill { transition: color 180ms, border-color 180ms, background-color 180ms, box-shadow 180ms; }
+.pill:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+
+.card {
+  transition: border-color 180ms, background-color 180ms, box-shadow 220ms, transform 220ms;
+}
+.card:hover { border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); box-shadow: 0 8px 26px rgba(0,0,0,.16); }
+
+th, td { transition: background-color 140ms; }
+tbody tr { transition: background-color 140ms; }
+tbody tr:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+
+details > summary { cursor: pointer; transition: color 140ms; }
+details > summary:hover { color: var(--accent); }
+details[open] > .body { animation: unfold 200ms cubic-bezier(.22,.61,.36,1) both; }
+@keyframes unfold { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+/* 分区切换与卡片进入：略微错开，避免所有卡片同时出现 */
+main section:not([hidden]) { animation: rise 240ms cubic-bezier(.22,.61,.36,1) both; }
+main section:not([hidden]) > .card { animation: rise 260ms cubic-bezier(.22,.61,.36,1) both; }
+main section:not([hidden]) > .card:nth-child(2) { animation-delay: 40ms; }
+main section:not([hidden]) > .card:nth-child(3) { animation-delay: 80ms; }
+main section:not([hidden]) > .card:nth-child(4) { animation-delay: 110ms; }
+main section:not([hidden]) > .card:nth-child(5) { animation-delay: 140ms; }
+
+/* 进度/骨架类：给一点呼吸感 */
+.dot.on { animation: dot-breathe 2.4s ease-in-out infinite; }
+@keyframes dot-breathe { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+
+/* ---------- 动效强度 ---------- */
+html[data-motion="calm"] body::before,
+html[data-motion="calm"] body::after { animation-duration: 60s; opacity: .3; }
+html[data-motion="calm"] .card:hover { transform: none; box-shadow: none; }
+
+html[data-motion="off"] *,
+html[data-motion="off"] *::before,
+html[data-motion="off"] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+html[data-motion="off"] body::before,
+html[data-motion="off"] body::after { display: none; }
+
+/* 系统级"减少动态效果"优先 */
+@media (prefers-reduced-motion: reduce) {
+  body::before, body::after { animation: none !important; }
+  * { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+}
+
+/* ---------- 玻璃层：让背景色斑"透"到每个元素上 ---------- */
+html { background: var(--bg); }
+body { background: transparent; }
+
+header {
+  background: color-mix(in srgb, var(--card) 68%, transparent) !important;
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+}
+nav {
+  background: color-mix(in srgb, var(--card-2) 62%, transparent) !important;
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+}
+.card, .pcard, .up-adv, #banner {
+  background: color-mix(in srgb, var(--card) 76%, transparent) !important;
+  backdrop-filter: blur(14px) saturate(130%);
+  -webkit-backdrop-filter: blur(14px) saturate(130%);
+}
+/* 嵌套卡片（任务项、站点行）也一起玻璃化，但更薄一点，避免层层叠糊 */
+.site, .card .pcard, .card .card {
+  background: color-mix(in srgb, var(--card-2) 70%, transparent) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+/* 输入类保持高不透明度，保证可读性 */
+input, select, textarea, pre, code {
+  backdrop-filter: none;
+}
+input, select, textarea { background: color-mix(in srgb, var(--bg) 88%, transparent) !important; }
+
 </style>
 </head>
 
 
 <body>
-<header>
+<!-- 一条顶栏：应用信息 + 操作按钮 + 窗口按钮。
+     宿主里它就是标题栏：左侧空白可拖动、双击最大化；从 #tb-actions 往右是交互区。 -->
+<header id="titlebar">
   <h1>
     <svg class="app-mark" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
       <rect x="2.5" y="4.5" width="19" height="15" rx="3.5"/>
@@ -942,10 +1265,30 @@ fluent-badge[appearance="accent"] { --accent-foreground-rest: var(--colorBrandFo
     </svg>
     <span class="app-title">便携版 DeepSeek Harness</span>
     <span class="sub" id="hdr-sub">正在读取状态…</span>
-  </h1>
-  <div class="row hdr-actions">
     <span class="pill" id="hdr-login"><span class="dot off"></span> 未解锁</span>
+  </h1>
+  <div class="row hdr-actions" id="tb-actions">
+    <button class="btn" id="btn-theme" type="button" aria-pressed="false" title="深色 / 浅色切换（会记住你的选择）">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="vertical-align:-2px">
+        <circle cx="12" cy="12" r="4.2"/>
+        <path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/>
+      </svg>
+      <span id="btn-theme-label">浅色</span>
+    </button>
     <button class="btn" id="btn-logout" hidden>退出解锁</button>
+    <!-- 窗口按钮：只有启动器宿主里才出现（浏览器回退时用浏览器自己的标题栏） -->
+    <div class="tb-ctl" id="tb-ctl" hidden>
+      <button id="tb-min" type="button" aria-label="最小化">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5h8" stroke="currentColor" stroke-width="1.1"/></svg>
+      </button>
+      <button id="tb-max" type="button" aria-label="最大化">
+        <svg class="i-max" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1.2" y="1.2" width="7.6" height="7.6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+        <svg class="i-restore" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="3" width="6" height="6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M3.4 3V2.2A1.2 1.2 0 0 1 4.6 1H7.8a1.2 1.2 0 0 1 1.2 1.2v3.2A1.2 1.2 0 0 1 7.8 6.6H7" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+      </button>
+      <button id="tb-close" type="button" aria-label="关闭">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.4 1.4l7.2 7.2M8.6 1.4l-7.2 7.2" stroke="currentColor" stroke-width="1.1"/></svg>
+      </button>
+    </div>
   </div>
 </header>
 
@@ -955,6 +1298,7 @@ fluent-badge[appearance="accent"] { --accent-foreground-rest: var(--colorBrandFo
   <button role="tab" data-tab="upgrade" aria-selected="false">升级</button>
   <button role="tab" data-tab="diag" aria-selected="false">诊断</button>
   <button role="tab" data-tab="plugins" aria-selected="false">插件</button>
+  <button role="tab" data-tab="launcher" aria-selected="false">启动器</button>
 </nav>
 
 <div id="banner" hidden></div>
@@ -966,6 +1310,13 @@ fluent-badge[appearance="accent"] { --accent-foreground-rest: var(--colorBrandFo
     #tab-overview{display:flex;flex-direction:column;gap:12px}
     /* 标签页用 section[hidden] 切换：ID 优先级会压过 section[hidden]{display:none}，必须显式补回 */
     #tab-overview[hidden]{display:none}
+    /* 宽窗口排两列：卡片不再被拉成"左边一堆字、右边一片空" */
+    @media (min-width:1200px){
+      #tab-overview{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+      #tab-overview > .card{margin-bottom:0;min-width:0}
+      /* 尾部两张（密钥与站点、最近任务）整行铺开；注意 <style> 也算子元素，所以用 nth-last-child */
+      #tab-overview > .card:nth-last-child(1), #tab-overview > .card:nth-last-child(2){grid-column:1 / -1}
+    }
     #tab-overview .card{margin-bottom:0;border-radius:var(--borderRadiusXLarge);padding:16px 18px;
       transition:border-color var(--t-fast) var(--e-out),background var(--t-fast) var(--e-out)}
     #tab-overview .card > h2{display:flex;align-items:center;gap:8px;margin:0 0 12px;
@@ -1069,7 +1420,7 @@ fluent-badge[appearance="accent"] { --accent-foreground-rest: var(--colorBrandFo
       <div class="flash" id="ov-slot-out"></div>
     </div>
 
-    <div class="card ov-quiet">
+<div class="card ov-quiet">
       <h2>环境与占用<fluent-badge appearance="outline" size="small">只读</fluent-badge></h2>
       <div class="grid" id="ov-env"></div>
       <div class="ov-empty">
@@ -1647,6 +1998,25 @@ fluent-badge[appearance="accent"] { --accent-foreground-rest: var(--colorBrandFo
 
       <div class="up-note" id="u-ver-note" style="margin-top:6px"></div>
 
+      <div class="row" style="margin-top:10px">
+        <div class="f">
+          <label for="npm-src-mode">下载源</label>
+          <select id="npm-src-mode">
+            <option value="auto">自动（官方源 → 镜像）</option>
+            <option value="official">只走官方源</option>
+            <option value="mirror">只走镜像（国内网络推荐）</option>
+            <option value="custom">自定义地址…</option>
+          </select>
+        </div>
+        <div class="f">
+          <label for="npm-src-url">自定义地址（选「自定义」时填）</label>
+          <input id="npm-src-url" placeholder="https://registry.example.com">
+        </div>
+        <button class="btn" id="btn-npm-src-save" type="button">保存源</button>
+      </div>
+      <div class="sub" style="margin-top:4px">安装前会先探一次可达性：连不上的源直接跳过，不会再把窗口空等半小时。</div>
+      <div class="flash" id="npm-src-out"></div>
+
       <div class="up-meta">
         当前活动槽 / 空闲槽及各自版本：见页头状态条，或「概览 → 槽位」。
         <span>升级只写空闲槽，不会动活动槽。</span>
@@ -1656,7 +2026,7 @@ fluent-badge[appearance="accent"] { --accent-foreground-rest: var(--colorBrandFo
     </div>
 
     <!-- ② 进阶路径：显式指定槽位（信息层级降一档） -->
-    <div class="card up-adv">
+    <div class="card up-adv wide">
       <div class="up-sec">
         <h2>单独指定槽位版本</h2>
         <fluent-badge appearance="warning" size="small">进阶</fluent-badge>
@@ -2510,6 +2880,77 @@ fluent-badge[appearance="accent"] { --accent-foreground-rest: var(--colorBrandFo
 
     <div class="overlay" id="plug-detail" hidden><div class="card pv"><div id="pd-body"></div>
       <div class="row" style="margin-top:12px"><button class="btn" id="btn-pd-close">关闭</button></div></div></div>
+  </section>
+  <!-- ============================================ 启动器（应用自身的外观与行为） -->
+  <style>
+    /* ---- 启动器分区样式（作用域隔离，不污染其它分区） ---- */
+    #tab-launcher { display: flex; flex-direction: column; gap: 12px; }
+    #tab-launcher[hidden] { display: none; }
+    #tab-launcher .card { margin-bottom: 0; }
+    #launcher-swatches { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+    #launcher-swatches button {
+      width: 34px; height: 34px; border-radius: 50%; border: 2px solid transparent;
+      cursor: pointer; padding: 0; transition: transform 160ms cubic-bezier(.22,.61,.36,1),
+        border-color 160ms, box-shadow 160ms;
+    }
+    #launcher-swatches button:hover { transform: translateY(-2px) scale(1.06); }
+    #launcher-swatches button[aria-pressed="true"] {
+      border-color: var(--fg);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+    }
+  </style>
+
+  <section id="tab-launcher" role="tabpanel" hidden>
+    <div class="card">
+      <h2>外观<fluent-badge appearance="outline" size="small">跟随本盘</fluent-badge></h2>
+      <p class="sub">主题、背景与动效都只影响这个配置页；选择存 <code>data/ui-prefs.json</code>，换盘带走。</p>
+
+      <div class="row">
+        <div class="f">
+          <label for="ap-theme">主题</label>
+          <select id="ap-theme">
+            <option value="dark">深色</option>
+            <option value="light">浅色</option>
+          </select>
+        </div>
+        <div class="f">
+          <label for="ap-bg">背景</label>
+          <select id="ap-bg">
+            <option value="fluid">流体渐变</option>
+            <option value="solid">纯色</option>
+          </select>
+        </div>
+        <div class="f">
+          <label for="ap-motion">动效</label>
+          <select id="ap-motion">
+            <option value="full">完整</option>
+            <option value="calm">克制</option>
+            <option value="off">关闭</option>
+          </select>
+        </div>
+      </div>
+
+      <label>主色</label>
+      <div id="launcher-swatches" role="group" aria-label="主色">
+        <button type="button" data-accent="green"  aria-pressed="true"  style="background:#22C55E" aria-label="森林绿" title="森林绿"></button>
+        <button type="button" data-accent="blue"   aria-pressed="false" style="background:#3B82F6" aria-label="深海蓝" title="深海蓝"></button>
+        <button type="button" data-accent="purple" aria-pressed="false" style="background:#A855F7" aria-label="暮光紫" title="暮光紫"></button>
+        <button type="button" data-accent="orange" aria-pressed="false" style="background:#F59E0B" aria-label="琥珀橙" title="琥珀橙"></button>
+        <button type="button" data-accent="cyan"   aria-pressed="false" style="background:#06B6D4" aria-label="青碧" title="青碧"></button>
+      </div>
+
+      <div class="flash" id="ap-out"></div>
+    </div>
+
+    <div class="card">
+      <h2>窗口<fluent-badge appearance="outline" size="small">只读</fluent-badge></h2>
+      <div class="grid">
+        <div>标题栏</div><div>由页面自绘（可拖动、双击最大化）；右上是窗口按钮</div>
+        <div>缩放</div><div>窗口越宽，内容越放大；顶栏与菜单栏保持原尺寸</div>
+        <div>尺寸记忆</div><div>关窗时记住窗口大小与位置（<code>data/window.json</code>）</div>
+        <div>最小尺寸</div><div>960 × 660</div>
+      </div>
+    </div>
   </section>
 </main>
 
@@ -6872,10 +7313,201 @@ function pickedVersion() {
   if (!el('u-ver-manual-box').hidden) return el('u-ver-raw').value.trim();
   return String(el('u-ver').value || '').trim();
 }
+
+
+/* ---------------------------------------------------------------- 内容缩放
+   窗口变宽时把内容区整体放大（字/卡片/按钮一起），顶栏和菜单栏保持原尺寸。
+   基准 1180：1280 的窗口约 1.08，1600 约 1.36，1920 约 1.55（上限）。 */
+let _manualZoom = 1;          // Ctrl+滚轮的手动倍率（只作用于内容区）
+function applyContentZoom() {
+  const m = document.querySelector('main');
+  if (!m) return;
+  const w = document.documentElement.clientWidth || window.innerWidth;
+  let z = (w / 1180) * _manualZoom;
+  // 上限压到 1.2：窗口再宽也不把卡片和字号无限放大，只多留白/多列
+  if (z < 0.8) z = 0.8;
+  if (z > 1.2) z = 1.2;
+  m.style.zoom = z.toFixed(3);
+}
+applyContentZoom();
+// Ctrl+滚轮：只缩放内容区，菜单栏和顶栏保持原尺寸（宿主那边已关掉 WebView2 自带缩放）
+window.addEventListener('wheel', (ev) => {
+  if (!ev.ctrlKey) return;
+  ev.preventDefault();
+  _manualZoom = Math.min(1.6, Math.max(0.7, _manualZoom + (ev.deltaY > 0 ? -0.05 : 0.05)));
+  applyContentZoom();
+}, { passive: false });
+let _zoomTimer = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(_zoomTimer);
+  _zoomTimer = setTimeout(applyContentZoom, 80);
+});
+
+
+/* ---------------------------------------------------------------- 外观选项
+   背景（流体渐变/纯色）、主色、动效强度；都存在服务端的 data/ui-prefs.json，
+   和主题一样跟盘走。换主色只覆盖 CSS 令牌，不改任何组件样式。 */
+const APPEARANCE = { bg: 'fluid', accent: 'green', motion: 'full' };
+const ACCENTS = ["green", "blue", "purple", "orange", "cyan"];
+const MOTIONS = ["full", "calm", "off"];
+function currentAppearance() {
+  const h = document.documentElement;
+  return { bg: h.dataset.bg || 'fluid', accent: h.dataset.accent || 'green', motion: h.dataset.motion || 'full' };
+}
+function applyAppearance(a, persist) {
+  const h = document.documentElement;
+  const bg = a && a.bg === 'solid' ? 'solid' : 'fluid';
+  const accent = ACCENTS.indexOf(a && a.accent) >= 0 ? a.accent : "green";
+  const motion = MOTIONS.indexOf(a && a.motion) >= 0 ? a.motion : "full";
+  h.dataset.bg = bg;
+  h.dataset.accent = accent;
+  h.dataset.motion = motion;
+  if (el('ap-bg')) el('ap-bg').value = bg;
+  if (el('ap-accent')) el('ap-accent').value = accent;
+  if (el('ap-motion')) el('ap-motion').value = motion;
+  if (el('ap-theme')) el('ap-theme').value = h.dataset.theme === 'light' ? 'light' : 'dark';
+  document.querySelectorAll('#launcher-swatches button').forEach((b) => {
+    b.setAttribute('aria-pressed', b.dataset.accent === accent ? 'true' : 'false');
+  });
+  if (persist) api("/api/prefs", { appearance: { bg: bg, accent: accent, motion: motion } }).catch(() => {});
+}
+if (el('ap-theme')) {
+  el('ap-theme').addEventListener('change', () => { applyTheme(el('ap-theme').value, true); applyAppearance(null, false); });
+  const saveAp = () => {
+    applyAppearance({ bg: el("ap-bg").value, accent: el("ap-accent").value, motion: el("ap-motion").value }, true);
+    if (el('ap-out')) flash('ap-out', '已应用', 'ok');
+  };
+  el('ap-bg').addEventListener('change', saveAp);
+  document.querySelectorAll('#launcher-swatches button').forEach((b) => {
+    b.addEventListener('click', () => {
+      el('ap-accent').value = b.dataset.accent;
+      saveAp();
+    });
+  });
+  el('ap-motion').addEventListener('change', saveAp);
+}
+
+/* ---------------------------------------------------------------- 自绘标题栏
+   顶栏就是标题栏（和页面第一条 header 合并在一起），只在启动器宿主里出现；
+   浏览器回退（dsh-ui.cmd）时不显示窗口按钮，用浏览器自己的标题栏。
+   拖拽/缩放/最大化边界在宿主里做（WndProc）；页面负责：
+     1) 画三颗按钮并发消息；
+     2) 告诉宿主「从哪一列开始属于交互区」——右边是按钮，左边才是可拖动的空白。 */
+function initTitlebar() {
+  const bar = el('titlebar');
+  const host = window.chrome && window.chrome.webview;
+  if (!bar || !host) return;
+  el('tb-ctl').hidden = false;
+  const post = (msg) => { try { host.postMessage(msg); } catch (e) { /* 宿主不在 */ } };
+  el('tb-min').addEventListener('click', () => post({ type: 'dsh.win.min' }));
+  el('tb-max').addEventListener('click', () => post({ type: 'dsh.win.max' }));
+  el('tb-close').addEventListener('click', () => post({ type: 'dsh.win.close' }));
+  host.addEventListener('message', (ev) => {
+    const d = ev.data || {};
+    if (d.type === 'dsh.zoom') { syncHit(); return; }   // 缩放变了，可拖动区边界要重新量
+    if (d.type !== 'dsh.win.state') return;
+    const b = el('tb-max');
+    if (!b) return;
+    b.dataset.max = d.maximized ? '1' : '0';
+    b.setAttribute('aria-label', d.maximized ? '还原' : '最大化');
+  });
+  // 交互区从 #tb-actions 的左边缘开始：这条线左边＝标题栏（可拖），右边＝网页（可点）
+  const syncHit = () => {
+    const act = el('tb-actions');
+    if (!act) return;
+    const x = Math.round(act.getBoundingClientRect().left);
+    post({ type: 'dsh.win.hit', captionRight: x });
+  };
+  // 拖窗与双击最大化：交给宿主的非客户区拖动，这样贴边分屏、Snap 布局也是系统原生的
+  bar.addEventListener('mousedown', (ev) => {
+    if (ev.button !== 0) return;
+    if (ev.target.closest('button, a, input, select, .pb')) return;
+    post({ type: 'dsh.win.drag' });
+  });
+  const navBar = document.querySelector('nav');
+  if (navBar) {
+    navBar.addEventListener('dblclick', (ev) => {
+      if (ev.target.closest('button')) return;
+      post({ type: 'dsh.win.max' });
+    });
+  }
+  bar.addEventListener('dblclick', (ev) => {
+    if (ev.target.closest('button, a, input, select, .pb')) return;
+    post({ type: 'dsh.win.max' });
+  });
+  syncHit();
+  window.addEventListener('resize', syncHit);
+  if (window.ResizeObserver) new ResizeObserver(syncHit).observe(bar);
+}
+initTitlebar();
+
+/* ---------------------------------------------------------------- 主题
+   深/浅两套皮肤只靠 CSS 变量切换（html[data-theme]），组件样式不用动。
+   选择存在服务端的 data/ui-prefs.json（跟盘走，不写浏览器存储）；切换时再通知宿主，
+   把原生标题栏换成同一套颜色，免得又出现「边框和内容割裂」。 */
+function applyTheme(theme, persist) {
+  const t = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = t;
+  const label = el('btn-theme-label');
+  if (label) label.textContent = t === 'light' ? '深色' : '浅色';
+  const b = el('btn-theme');
+  if (b) b.setAttribute('aria-pressed', t === 'light' ? 'true' : 'false');
+  try {
+    if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage({ type: 'dsh.theme', theme: t });
+  } catch (e) { /* 浏览器回退路径没有宿主 */ }
+  if (persist) api('/api/prefs', { theme: t }).catch(() => {});
+}
+async function loadTheme() {
+  let saved = 'dark';
+  let appearance = null;
+  try {
+    const p = await api('/api/prefs');
+    if (p && (p.theme === 'light' || p.theme === 'dark')) saved = p.theme;
+    if (p && p.appearance) appearance = p.appearance;
+  } catch (e) { /* 老服务没有这个接口 */ }
+  applyTheme(saved, false);
+  applyAppearance(appearance, false);
+}
+if (el('btn-theme')) {
+  el('btn-theme').addEventListener('click', () => {
+    applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light', true);
+  });
+}
+
 el('btn-upgrade').addEventListener('click', (e) => {
   const v = pickedVersion();
   if (!v) { flash('up-out', '请先从列表里选一个版本（或用「手动填版本」）。', 'err'); return; }
   runJob('/api/jobs/upgrade', { version: v }, e.currentTarget, '升级中…');
+});
+
+/* ---------------------------------------------------------------- 下载源
+   官方源在部分网络下是「连得上但一直不回包」，以前会空等半小时才换镜像。
+   这里让用户选源并存盘（data\npm-source.json），安装前还会先探一次可达性。 */
+async function loadNpmSource() {
+  try {
+    const r = await api('/api/npm-source');
+    el('npm-src-mode').value = r.mode || 'auto';
+    el('npm-src-url').value = r.url || '';
+    el('npm-src-url').disabled = (r.mode !== 'custom');
+  } catch (e) { /* 老版本服务没有这个接口时不影响其它功能 */ }
+}
+el('npm-src-mode').addEventListener('change', () => {
+  el('npm-src-url').disabled = el('npm-src-mode').value !== 'custom';
+  if (!el('npm-src-url').disabled) el('npm-src-url').focus();
+});
+el('btn-npm-src-save').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  const mode = el('npm-src-mode').value;
+  const url = String(el('npm-src-url').value || '').trim();
+  btn.disabled = true;
+  try {
+    await api('/api/npm-source', { mode, url });
+    flash('npm-src-out', mode === 'custom' ? ('已保存：' + url) : '已保存：下次安装 / 升级生效', 'ok');
+  } catch (err) {
+    flash('npm-src-out', '保存失败：' + err.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
 });
 el('btn-install-slot').addEventListener('click', (e) => {
   const version = String(el('i-ver').value || el('u-ver-raw').value || '').trim();
@@ -7393,8 +8025,10 @@ el('btn-plug-allow').addEventListener('click', (e) => {
   } else {
     el('login-ov').hidden = true;
   }
+  await loadTheme();     // 主题要在首屏渲染前定下来
   await loadSites().catch(() => {});
   loadVersions();      // 版本列表（失败也不影响其它功能，页面会提示改用手动填）
+  loadNpmSource();     // 下载源偏好（老服务没有这个接口时静默跳过）
   startPolling();
 })().catch((err) => {
   // 启动阶段出错不能静默：把错误显示在最上面，否则用户只看到「正在读取状态…」卡住

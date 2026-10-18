@@ -206,27 +206,248 @@ namespace DshToGo
         [DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
-        private static void PaintDarkChrome(IntPtr hwnd)
+        // 深/浅两套标题栏颜色，跟着页面里的主题一起换。
+        private static void PaintChrome(IntPtr hwnd, bool dark)
         {
             if (hwnd == IntPtr.Zero) return;
-            int on = 1;
+            int on = dark ? 1 : 0;
             // 20 = DWMWA_USE_IMMERSIVE_DARK_MODE（Win10 2004+）；19 是旧版编号
             if (DwmSetWindowAttribute(hwnd, 20, ref on, sizeof(int)) != 0)
             {
                 DwmSetWindowAttribute(hwnd, 19, ref on, sizeof(int));
             }
-            int caption = 0x1F1F1F;   // = --colorNeutralBackground2，和页面顶栏同色
-            int text = 0xFFFFFF;
-            int border = 0x3D3D3D;    // = --colorNeutralStroke3
+            int caption = dark ? 0x001F1F1F : 0x00F3F5F9;   // 深：--colorNeutralBackground2 / 浅：--bg
+            int text = dark ? 0x00FFFFFF : 0x00101828;      // 浅：--fg
+            int border = dark ? 0x003D3D3D : 0x00C9D2DE;    // 深：--colorNeutralStroke3 / 浅：--border
             DwmSetWindowAttribute(hwnd, 35, ref caption, sizeof(int));  // DWMWA_CAPTION_COLOR（Win11）
             DwmSetWindowAttribute(hwnd, 36, ref text, sizeof(int));     // DWMWA_TEXT_COLOR
             DwmSetWindowAttribute(hwnd, 34, ref border, sizeof(int));   // DWMWA_BORDER_COLOR
+        }
+
+        private static void PaintDarkChrome(IntPtr hwnd)
+        {
+            PaintChrome(hwnd, true);
+        }
+
+
+        // ================= 自绘标题栏所需的窗口行为 =================
+        // 页面顶部 40px 画的是「应用自己的标题栏」，所以窗口必须无边框；
+        // 但 FormBorderStyle.None 会把拖拽、缩放边、最大化边界一起拿掉，这里逐个补回来。
+        private const int WM_NCHITTEST = 0x0084;
+        private const int WM_GETMINMAXINFO = 0x0024;
+        private const int HTCLIENT = 1, HTCAPTION = 2;
+        private const int HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14;
+        private const int HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
+        // 下面这两个数字必须和页面 CSS 的 header 高度 / 三颗按钮总宽保持一致
+        private const int TitleBarHeight = 44;   // 与页面 header 的高度一致
+        private const int CaptionButtonsWidth = 138;
+        private const int ResizeBorder = 4;
+        // 页面量出来的「可拖动区右边界」（#tb-actions 的左边缘，像素）。
+        // -1 = 还没收到，先用「窗口宽 - 138」兜底，保证按钮永远可点。
+        private int _captionRight = -1;
+        // 构造期设置 Size 会触发 OnResize，那时还没读回上次的尺寸；
+        // 没有这个闸门就会先把默认值写回文件、把记忆覆盖掉（踩过）。
+        private bool _stateReady;
+        // 内容缩放：窗口越宽，整套 UI（字/卡片/按钮）一起放大，而不是只拉宽留白。
+        // 基准 1180 CSS px —— 1280 的窗口约 1.08，1920 约 1.6，最小 0.8、最大 1.75。
+        // 内容缩放基准宽度（页面用，宿主只做命中测试换算保持 1:1）
+        private double _zoom = 1.0;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WINPOINT { public int X; public int Y; }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WINRECT { public int Left, Top, Right, Bottom; }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MINMAXINFO
+        {
+            public WINPOINT ptReserved, ptMaxSize, ptMaxPosition, ptMinTrackSize, ptMaxTrackSize;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MONITORINFO
+        {
+            public int cbSize; public WINRECT rcMonitor; public WINRECT rcWork; public int dwFlags;
+        }
+        [DllImport("user32.dll")] private static extern bool GetCursorPos(out WINPOINT p);
+        [DllImport("user32.dll")] private static extern bool ReleaseCapture();
+        [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, int flags);
+        [DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr hmon, ref MONITORINFO mi);
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_NCHITTEST)
+            {
+                base.WndProc(ref m);
+                if ((int)m.Result != HTCLIENT) return;   // 系统控件（如菜单）优先
+                // 用消息里的屏幕坐标（标准做法），而不是再问一次鼠标位置：
+                // 拖动过程中坐标才连续，也方便用 SendMessage 做命中测试。
+                int lp = m.LParam.ToInt32();
+                int sx = (short)(lp & 0xFFFF);
+                int sy = (short)((lp >> 16) & 0xFFFF);
+                Point cp = PointToClient(new Point(sx, sy));
+                int w = ClientSize.Width, h = ClientSize.Height;
+                if (WindowState != FormWindowState.Maximized)
+                {
+                    bool left = cp.X < ResizeBorder, right = cp.X >= w - ResizeBorder;
+                    bool top = cp.Y < ResizeBorder, bottom = cp.Y >= h - ResizeBorder;
+                    if (top && left) { m.Result = (IntPtr)HTTOPLEFT; return; }
+                    if (top && right) { m.Result = (IntPtr)HTTOPRIGHT; return; }
+                    if (bottom && left) { m.Result = (IntPtr)HTBOTTOMLEFT; return; }
+                    if (bottom && right) { m.Result = (IntPtr)HTBOTTOMRIGHT; return; }
+                    if (left) { m.Result = (IntPtr)HTLEFT; return; }
+                    if (right) { m.Result = (IntPtr)HTRIGHT; return; }
+                    if (top) { m.Result = (IntPtr)HTTOP; return; }
+                    if (bottom) { m.Result = (IntPtr)HTBOTTOM; return; }
+                }
+                // 顶栏靠左的部分＝标题栏：可拖、双击最大化；
+                // 顶栏最右边 138px 留给页面里的三颗按钮，命中返回 HTCLIENT 让点击进网页。
+                int dragRight = _captionRight > 0 ? _captionRight : w - CaptionButtonsWidth;
+                int barH = TitleBarHeight;
+                if (cp.Y < barH && cp.X < dragRight)
+                {
+                    m.Result = (IntPtr)HTCAPTION;
+                }
+                return;
+            }
+            if (m.Msg == WM_GETMINMAXINFO)
+            {
+                // 无边框窗口最大化会盖住任务栏，用工作区尺寸纠正
+                base.WndProc(ref m);
+                IntPtr hmon = MonitorFromWindow(Handle, 2);
+                MONITORINFO mi = new MONITORINFO();
+                mi.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
+                if (GetMonitorInfo(hmon, ref mi))
+                {
+                    MINMAXINFO mmi = (MINMAXINFO)Marshal.PtrToStructure(m.LParam, typeof(MINMAXINFO));
+                    mmi.ptMaxPosition.X = mi.rcWork.Left - mi.rcMonitor.Left;
+                    mmi.ptMaxPosition.Y = mi.rcWork.Top - mi.rcMonitor.Top;
+                    mmi.ptMaxSize.X = mi.rcWork.Right - mi.rcWork.Left;
+                    mmi.ptMaxSize.Y = mi.rcWork.Bottom - mi.rcWork.Top;
+                    Marshal.StructureToPtr(mmi, m.LParam, false);
+                }
+                return;
+            }
+            base.WndProc(ref m);
+        }
+
+        // 页面按钮 → 宿主：最小化 / 最大化还原 / 关闭（关闭走和原生关闭按钮一样的流程）
+        private void ApplyZoom()
+        {
+            if (!_webReady || _web == null) return;
+            try
+            {
+                int w = ClientSize.Width;
+                if (w <= 0) return;
+                // 缩放在页面里只作用于内容区（main），顶栏和菜单栏保持原尺寸。
+                // 宿主这边只负责不变，避免把菜单也一起缩放。
+                return;
+            }
+            catch (Exception ex) { Host.Log("zoom failed: " + ex.Message); }
+        }
+
+        private void PostWindowState()
+        {
+            if (!_webReady || _web == null || _web.CoreWebView2 == null) return;
+            try
+            {
+                _web.CoreWebView2.PostWebMessageAsJson(
+                    "{\"type\":\"dsh.win.state\",\"maximized\":" + (WindowState == FormWindowState.Maximized ? "true" : "false") + "}");
+            }
+            catch (Exception) { }
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            PostWindowState();
+            ApplyZoom();
+            if (WindowState == FormWindowState.Normal) SaveWindowState();
+        }
+
+        // ---- 窗口大小/位置记忆（data/window.json，跟着盘走）----
+        private string WindowStateFile()
+        {
+            return Path.Combine(_root, "data", "window.json");
+        }
+
+        private void SaveWindowState()
+        {
+            try
+            {
+                if (!_stateReady) return;
+                if (WindowState != FormWindowState.Normal) return;
+                string dir = Path.Combine(_root, "data");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(WindowStateFile(),
+                    "{\"w\":" + Width + ",\"h\":" + Height + ",\"x\":" + Left + ",\"y\":" + Top + "}");
+            }
+            catch (Exception) { }
+        }
+
+        private void LoadWindowState()
+        {
+            try
+            {
+                string f = WindowStateFile();
+                if (!File.Exists(f)) return;
+                string json = File.ReadAllText(f);
+                int w = IntFromJson(json, "w"), h = IntFromJson(json, "h");
+                int x = IntFromJson(json, "x"), y = IntFromJson(json, "y");
+                if (w < 800 || h < 560) return;
+                Size = new Size(w, h);
+                Rectangle screen = Screen.FromPoint(new Point(x + w / 2, y + h / 2)).WorkingArea;
+                if (x > screen.Left - 40 && y > screen.Top - 40
+                    && x < screen.Right - 200 && y < screen.Bottom - 200)
+                {
+                    StartPosition = FormStartPosition.Manual;
+                    Location = new Point(x, y);
+                }
+            }
+            catch (Exception) { }
+            finally { _stateReady = true; }
+        }
+
+        private static int IntFromJson(string json, string key)
+        {
+            int at = json.IndexOf("\"" + key + "\"", StringComparison.Ordinal);
+            if (at < 0) return 0;
+            int colon = json.IndexOf(':', at);
+            if (colon < 0) return 0;
+            int i = colon + 1;
+            bool neg = false;
+            while (i < json.Length && (json[i] == ' ' || json[i] == '-')) { if (json[i] == '-') neg = true; i++; }
+            int start = i;
+            while (i < json.Length && json[i] >= '0' && json[i] <= '9') i++;
+            int v;
+            if (i <= start || !int.TryParse(json.Substring(start, i - start), out v)) return 0;
+            return neg ? -v : v;
+        }
+
+
+        // 无边框窗口默认没有 WS_MAXIMIZEBOX / WS_SYSMENU 这些位，
+        // 系统就认为"这个窗口不能最大化"，于是双击标题栏（我们命中测试返回的 HTCAPTION）
+        // 什么都不会发生。把位补回来：窗口边框依然不画（FormBorderStyle.None），
+        // 但双击最大化、Alt+Space 系统菜单、拖到边缘 Snap 都恢复成系统原生行为。
+        private const int WS_MAXIMIZEBOX = 0x00010000;
+        private const int WS_MINIMIZEBOX = 0x00020000;
+        private const int WS_SYSMENU = 0x00080000;
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                cp.Style |= WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU;
+                return cp;
+            }
         }
 
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
             PaintDarkChrome(Handle);
+            int round = 2;   // DWMWCP_ROUND：无边框窗口也要圆角
+            DwmSetWindowAttribute(Handle, 33, ref round, sizeof(int));
         }
 
         protected override void OnShown(EventArgs e)
@@ -262,13 +483,40 @@ namespace DshToGo
                 "dsh-to-go-activate-" + key);
 
             Text = Program.AppTitle;            // fixed; never contains the token
-            Size = new Size(1200, 840);
+            // 图标 = dsh 官方 Windows 图标（assets\app.ico，由 tools/launcher/make-icon.js 从官方 SVG 生成）
+            // 先用 assets 里的多尺寸 ico（窗口/Alt-Tab 各尺寸都清晰）；assets 不在（便携包被单独拷走）时
+            // 再取 exe 自己内嵌的那一份，保证任何情况下都不是系统通用图标。
+            bool gotIcon = false;
+            try
+            {
+                string ico = Path.Combine(root, "assets", "app.ico");
+                if (File.Exists(ico)) { Icon = new Icon(ico); gotIcon = true; }
+            }
+            catch (Exception) { /* 图标缺失不该阻止启动 */ }
+            if (!gotIcon)
+            {
+                try
+                {
+                    Icon own = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+                    if (own != null) { Icon = own; gotIcon = true; }
+                }
+                catch (Exception) { /* 实在取不到就用系统默认 */ }
+            }
+            Size = new Size(1280, 860);
             StartPosition = FormStartPosition.CenterScreen;
-            MinimumSize = new Size(880, 620);
+            LoadWindowState();   // 上次的窗口大小/位置（没有就居中）
+            MinimumSize = new Size(960, 660);
+            // 无边框：标题栏由页面自己画（顶部 40px 是拖拽区，右侧 138px 是三个按钮），
+            // 缩放边、最大化边界、双击最大化都在下面的 WndProc 里补回来。
+            FormBorderStyle = FormBorderStyle.None;
             MainMenuStrip = null;               // no menu bar
-            BackColor = Color.FromArgb(24, 26, 32);
+            // 4px 缩放边的颜色＝顶栏颜色：视觉上顶栏一直铺到窗口边缘，三颗按钮才像"贴边"
+            BackColor = Color.FromArgb(31, 31, 31);
             DoubleBuffered = true;
 
+            // 关键：WebView2 是子窗口，会吃掉整块客户区的鼠标消息，窗体自己收不到 WM_NCHITTEST。
+            // 留 4px 边距给窗体（颜色与页面同色，看起来像一条细边框），这 4px 才是真正的缩放热区。
+            Padding = new Padding(4);
             _web.Dock = DockStyle.Fill;
             _web.DefaultBackgroundColor = Color.FromArgb(24, 26, 32);
             Controls.Add(_web);
@@ -550,6 +798,8 @@ namespace DshToGo
             s.AreDevToolsEnabled = false;
             s.AreDefaultContextMenusEnabled = false;
             s.AreBrowserAcceleratorKeysEnabled = false;
+            // 自带缩放在 Ctrl+滚轮时会把顶栏和菜单栏一起放大；缩放改由页面只作用于内容区
+            s.IsZoomControlEnabled = false;
             s.IsPasswordAutosaveEnabled = false;
             s.IsGeneralAutofillEnabled = false;
             s.AreDefaultScriptDialogsEnabled = false;
@@ -576,6 +826,8 @@ namespace DshToGo
         private async void Web_NavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs e)
         {
             if (e.IsSuccess) Host.Log("page loaded");
+            if (e.IsSuccess) PostWindowState();
+            if (e.IsSuccess) ApplyZoom();
             else Host.Log("page load failed: " + e.WebErrorStatus);
 
             if (_probeDone) return;
@@ -639,7 +891,76 @@ namespace DshToGo
             if (json.IndexOf("\"dsh.activate\"", StringComparison.Ordinal) >= 0)
             {
                 BringToFrontNow();
+                return;
             }
+            if (json.IndexOf("\"dsh.win.drag\"", StringComparison.Ordinal) >= 0)
+            {
+                // 交给系统的非客户区拖动：双击最大化、贴边分屏、拖到顶部弹出 Snap 布局都会自动生效
+                ReleaseCapture();
+                SendMessage(Handle, 0x00A1 /*WM_NCLBUTTONDOWN*/, (IntPtr)HTCAPTION, IntPtr.Zero);
+                return;
+            }
+            if (json.IndexOf("\"dsh.win.hit\"", StringComparison.Ordinal) >= 0)
+            {
+                int at = json.IndexOf("\"captionRight\"", StringComparison.Ordinal);
+                if (at >= 0)
+                {
+                    int colon = json.IndexOf(':', at);
+                    if (colon > 0)
+                    {
+                        int i = colon + 1;
+                        while (i < json.Length && (json[i] == ' ' || json[i] == '	')) i++;
+                        int start = i;
+                        while (i < json.Length && json[i] >= '0' && json[i] <= '9') i++;
+                        int v;
+                        if (i > start && int.TryParse(json.Substring(start, i - start), out v) && v > 0)
+                        {
+                            _captionRight = v;
+                        }
+                    }
+                }
+                return;
+            }
+            if (json.IndexOf("\"dsh.win.min\"", StringComparison.Ordinal) >= 0)
+            {
+                WindowState = FormWindowState.Minimized;
+                return;
+            }
+            if (json.IndexOf("\"dsh.win.max\"", StringComparison.Ordinal) >= 0)
+            {
+                WindowState = WindowState == FormWindowState.Maximized
+                    ? FormWindowState.Normal : FormWindowState.Maximized;
+                PostWindowState();
+                return;
+            }
+            if (json.IndexOf("\"dsh.win.close\"", StringComparison.Ordinal) >= 0)
+            {
+                BeginCloseFlow();
+                return;
+            }
+            if (json.IndexOf("\"dsh.theme\"", StringComparison.Ordinal) >= 0)
+            {
+                // 只认 light 这一种取值；标题文本永远是固定值，不受页面影响
+                ApplyTheme(json.IndexOf("\"light\"", StringComparison.Ordinal) >= 0);
+            }
+        }
+
+        private void ApplyTheme(bool light)
+        {
+            try
+            {
+                PaintChrome(Handle, !light);
+                BackColor = light ? Color.FromArgb(250, 250, 250) : Color.FromArgb(31, 31, 31);
+                // 底色跟着换，避免加载/重绘的瞬间露出白边（SDK 的这个属性在 WebView2 控件上）
+                if (_web != null)
+                {
+                    _web.DefaultBackgroundColor = light
+                        ? Color.FromArgb(243, 245, 249)
+                        : Color.FromArgb(24, 26, 32);
+                }
+                Host.Log("theme=" + (light ? "light" : "dark"));
+            }
+            catch (Exception ex) { Host.Log("theme apply failed: " + ex.Message); }
         }
 
         private void PostToken()
@@ -710,6 +1031,7 @@ namespace DshToGo
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
         {
+            SaveWindowState();
             // 关窗要先问一次「dsh 要不要一起停」：不能在这里同步阻塞 UI 线程，
             // 所以先取消这次关闭，走完流程再真正关。
             if (!_closeConfirmed)

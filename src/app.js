@@ -787,10 +787,201 @@ function pickedVersion() {
   if (!el('u-ver-manual-box').hidden) return el('u-ver-raw').value.trim();
   return String(el('u-ver').value || '').trim();
 }
+
+
+/* ---------------------------------------------------------------- 内容缩放
+   窗口变宽时把内容区整体放大（字/卡片/按钮一起），顶栏和菜单栏保持原尺寸。
+   基准 1180：1280 的窗口约 1.08，1600 约 1.36，1920 约 1.55（上限）。 */
+let _manualZoom = 1;          // Ctrl+滚轮的手动倍率（只作用于内容区）
+function applyContentZoom() {
+  const m = document.querySelector('main');
+  if (!m) return;
+  const w = document.documentElement.clientWidth || window.innerWidth;
+  let z = (w / 1180) * _manualZoom;
+  // 上限压到 1.2：窗口再宽也不把卡片和字号无限放大，只多留白/多列
+  if (z < 0.8) z = 0.8;
+  if (z > 1.2) z = 1.2;
+  m.style.zoom = z.toFixed(3);
+}
+applyContentZoom();
+// Ctrl+滚轮：只缩放内容区，菜单栏和顶栏保持原尺寸（宿主那边已关掉 WebView2 自带缩放）
+window.addEventListener('wheel', (ev) => {
+  if (!ev.ctrlKey) return;
+  ev.preventDefault();
+  _manualZoom = Math.min(1.6, Math.max(0.7, _manualZoom + (ev.deltaY > 0 ? -0.05 : 0.05)));
+  applyContentZoom();
+}, { passive: false });
+let _zoomTimer = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(_zoomTimer);
+  _zoomTimer = setTimeout(applyContentZoom, 80);
+});
+
+
+/* ---------------------------------------------------------------- 外观选项
+   背景（流体渐变/纯色）、主色、动效强度；都存在服务端的 data/ui-prefs.json，
+   和主题一样跟盘走。换主色只覆盖 CSS 令牌，不改任何组件样式。 */
+const APPEARANCE = { bg: 'fluid', accent: 'green', motion: 'full' };
+const ACCENTS = ["green", "blue", "purple", "orange", "cyan"];
+const MOTIONS = ["full", "calm", "off"];
+function currentAppearance() {
+  const h = document.documentElement;
+  return { bg: h.dataset.bg || 'fluid', accent: h.dataset.accent || 'green', motion: h.dataset.motion || 'full' };
+}
+function applyAppearance(a, persist) {
+  const h = document.documentElement;
+  const bg = a && a.bg === 'solid' ? 'solid' : 'fluid';
+  const accent = ACCENTS.indexOf(a && a.accent) >= 0 ? a.accent : "green";
+  const motion = MOTIONS.indexOf(a && a.motion) >= 0 ? a.motion : "full";
+  h.dataset.bg = bg;
+  h.dataset.accent = accent;
+  h.dataset.motion = motion;
+  if (el('ap-bg')) el('ap-bg').value = bg;
+  if (el('ap-accent')) el('ap-accent').value = accent;
+  if (el('ap-motion')) el('ap-motion').value = motion;
+  if (el('ap-theme')) el('ap-theme').value = h.dataset.theme === 'light' ? 'light' : 'dark';
+  document.querySelectorAll('#launcher-swatches button').forEach((b) => {
+    b.setAttribute('aria-pressed', b.dataset.accent === accent ? 'true' : 'false');
+  });
+  if (persist) api("/api/prefs", { appearance: { bg: bg, accent: accent, motion: motion } }).catch(() => {});
+}
+if (el('ap-theme')) {
+  el('ap-theme').addEventListener('change', () => { applyTheme(el('ap-theme').value, true); applyAppearance(null, false); });
+  const saveAp = () => {
+    applyAppearance({ bg: el("ap-bg").value, accent: el("ap-accent").value, motion: el("ap-motion").value }, true);
+    if (el('ap-out')) flash('ap-out', '已应用', 'ok');
+  };
+  el('ap-bg').addEventListener('change', saveAp);
+  document.querySelectorAll('#launcher-swatches button').forEach((b) => {
+    b.addEventListener('click', () => {
+      el('ap-accent').value = b.dataset.accent;
+      saveAp();
+    });
+  });
+  el('ap-motion').addEventListener('change', saveAp);
+}
+
+/* ---------------------------------------------------------------- 自绘标题栏
+   顶栏就是标题栏（和页面第一条 header 合并在一起），只在启动器宿主里出现；
+   浏览器回退（dsh-ui.cmd）时不显示窗口按钮，用浏览器自己的标题栏。
+   拖拽/缩放/最大化边界在宿主里做（WndProc）；页面负责：
+     1) 画三颗按钮并发消息；
+     2) 告诉宿主「从哪一列开始属于交互区」——右边是按钮，左边才是可拖动的空白。 */
+function initTitlebar() {
+  const bar = el('titlebar');
+  const host = window.chrome && window.chrome.webview;
+  if (!bar || !host) return;
+  el('tb-ctl').hidden = false;
+  const post = (msg) => { try { host.postMessage(msg); } catch (e) { /* 宿主不在 */ } };
+  el('tb-min').addEventListener('click', () => post({ type: 'dsh.win.min' }));
+  el('tb-max').addEventListener('click', () => post({ type: 'dsh.win.max' }));
+  el('tb-close').addEventListener('click', () => post({ type: 'dsh.win.close' }));
+  host.addEventListener('message', (ev) => {
+    const d = ev.data || {};
+    if (d.type === 'dsh.zoom') { syncHit(); return; }   // 缩放变了，可拖动区边界要重新量
+    if (d.type !== 'dsh.win.state') return;
+    const b = el('tb-max');
+    if (!b) return;
+    b.dataset.max = d.maximized ? '1' : '0';
+    b.setAttribute('aria-label', d.maximized ? '还原' : '最大化');
+  });
+  // 交互区从 #tb-actions 的左边缘开始：这条线左边＝标题栏（可拖），右边＝网页（可点）
+  const syncHit = () => {
+    const act = el('tb-actions');
+    if (!act) return;
+    const x = Math.round(act.getBoundingClientRect().left);
+    post({ type: 'dsh.win.hit', captionRight: x });
+  };
+  // 拖窗与双击最大化：交给宿主的非客户区拖动，这样贴边分屏、Snap 布局也是系统原生的
+  bar.addEventListener('mousedown', (ev) => {
+    if (ev.button !== 0) return;
+    if (ev.target.closest('button, a, input, select, .pb')) return;
+    post({ type: 'dsh.win.drag' });
+  });
+  const navBar = document.querySelector('nav');
+  if (navBar) {
+    navBar.addEventListener('dblclick', (ev) => {
+      if (ev.target.closest('button')) return;
+      post({ type: 'dsh.win.max' });
+    });
+  }
+  bar.addEventListener('dblclick', (ev) => {
+    if (ev.target.closest('button, a, input, select, .pb')) return;
+    post({ type: 'dsh.win.max' });
+  });
+  syncHit();
+  window.addEventListener('resize', syncHit);
+  if (window.ResizeObserver) new ResizeObserver(syncHit).observe(bar);
+}
+initTitlebar();
+
+/* ---------------------------------------------------------------- 主题
+   深/浅两套皮肤只靠 CSS 变量切换（html[data-theme]），组件样式不用动。
+   选择存在服务端的 data/ui-prefs.json（跟盘走，不写浏览器存储）；切换时再通知宿主，
+   把原生标题栏换成同一套颜色，免得又出现「边框和内容割裂」。 */
+function applyTheme(theme, persist) {
+  const t = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = t;
+  const label = el('btn-theme-label');
+  if (label) label.textContent = t === 'light' ? '深色' : '浅色';
+  const b = el('btn-theme');
+  if (b) b.setAttribute('aria-pressed', t === 'light' ? 'true' : 'false');
+  try {
+    if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage({ type: 'dsh.theme', theme: t });
+  } catch (e) { /* 浏览器回退路径没有宿主 */ }
+  if (persist) api('/api/prefs', { theme: t }).catch(() => {});
+}
+async function loadTheme() {
+  let saved = 'dark';
+  let appearance = null;
+  try {
+    const p = await api('/api/prefs');
+    if (p && (p.theme === 'light' || p.theme === 'dark')) saved = p.theme;
+    if (p && p.appearance) appearance = p.appearance;
+  } catch (e) { /* 老服务没有这个接口 */ }
+  applyTheme(saved, false);
+  applyAppearance(appearance, false);
+}
+if (el('btn-theme')) {
+  el('btn-theme').addEventListener('click', () => {
+    applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light', true);
+  });
+}
+
 el('btn-upgrade').addEventListener('click', (e) => {
   const v = pickedVersion();
   if (!v) { flash('up-out', '请先从列表里选一个版本（或用「手动填版本」）。', 'err'); return; }
   runJob('/api/jobs/upgrade', { version: v }, e.currentTarget, '升级中…');
+});
+
+/* ---------------------------------------------------------------- 下载源
+   官方源在部分网络下是「连得上但一直不回包」，以前会空等半小时才换镜像。
+   这里让用户选源并存盘（data\npm-source.json），安装前还会先探一次可达性。 */
+async function loadNpmSource() {
+  try {
+    const r = await api('/api/npm-source');
+    el('npm-src-mode').value = r.mode || 'auto';
+    el('npm-src-url').value = r.url || '';
+    el('npm-src-url').disabled = (r.mode !== 'custom');
+  } catch (e) { /* 老版本服务没有这个接口时不影响其它功能 */ }
+}
+el('npm-src-mode').addEventListener('change', () => {
+  el('npm-src-url').disabled = el('npm-src-mode').value !== 'custom';
+  if (!el('npm-src-url').disabled) el('npm-src-url').focus();
+});
+el('btn-npm-src-save').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  const mode = el('npm-src-mode').value;
+  const url = String(el('npm-src-url').value || '').trim();
+  btn.disabled = true;
+  try {
+    await api('/api/npm-source', { mode, url });
+    flash('npm-src-out', mode === 'custom' ? ('已保存：' + url) : '已保存：下次安装 / 升级生效', 'ok');
+  } catch (err) {
+    flash('npm-src-out', '保存失败：' + err.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
 });
 el('btn-install-slot').addEventListener('click', (e) => {
   const version = String(el('i-ver').value || el('u-ver-raw').value || '').trim();
@@ -1308,8 +1499,10 @@ el('btn-plug-allow').addEventListener('click', (e) => {
   } else {
     el('login-ov').hidden = true;
   }
+  await loadTheme();     // 主题要在首屏渲染前定下来
   await loadSites().catch(() => {});
   loadVersions();      // 版本列表（失败也不影响其它功能，页面会提示改用手动填）
+  loadNpmSource();     // 下载源偏好（老服务没有这个接口时静默跳过）
   startPolling();
 })().catch((err) => {
   // 启动阶段出错不能静默：把错误显示在最上面，否则用户只看到「正在读取状态…」卡住

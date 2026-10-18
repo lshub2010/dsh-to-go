@@ -29,7 +29,8 @@ if not exist "%ROOT%\runtime\node\node.exe" (
 set "OUT=%ROOT%"
 
 "%CSC%" /nologo /codepage:65001 /target:winexe /platform:x64 /optimize+ ^
-  /out:"%OUT%\dsh-to-go.exe" ^
+  /out:"%ROOT%\dsh-to-go.exe" ^
+  /win32icon:"%ROOT%\assets\app.ico" ^
   /r:System.dll /r:System.Core.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll ^
   /r:System.Net.Http.dll ^
   /r:"%SDK%\Microsoft.Web.WebView2.Core.dll" ^

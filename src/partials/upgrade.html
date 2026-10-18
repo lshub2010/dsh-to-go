@@ -106,6 +106,25 @@
 
       <div class="up-note" id="u-ver-note" style="margin-top:6px"></div>
 
+      <div class="row" style="margin-top:10px">
+        <div class="f">
+          <label for="npm-src-mode">下载源</label>
+          <select id="npm-src-mode">
+            <option value="auto">自动（官方源 → 镜像）</option>
+            <option value="official">只走官方源</option>
+            <option value="mirror">只走镜像（国内网络推荐）</option>
+            <option value="custom">自定义地址…</option>
+          </select>
+        </div>
+        <div class="f">
+          <label for="npm-src-url">自定义地址（选「自定义」时填）</label>
+          <input id="npm-src-url" placeholder="https://registry.example.com">
+        </div>
+        <button class="btn" id="btn-npm-src-save" type="button">保存源</button>
+      </div>
+      <div class="sub" style="margin-top:4px">安装前会先探一次可达性：连不上的源直接跳过，不会再把窗口空等半小时。</div>
+      <div class="flash" id="npm-src-out"></div>
+
       <div class="up-meta">
         当前活动槽 / 空闲槽及各自版本：见页头状态条，或「概览 → 槽位」。
         <span>升级只写空闲槽，不会动活动槽。</span>
@@ -115,7 +134,7 @@
     </div>
 
     <!-- ② 进阶路径：显式指定槽位（信息层级降一档） -->
-    <div class="card up-adv">
+    <div class="card up-adv wide">
       <div class="up-sec">
         <h2>单独指定槽位版本</h2>
         <fluent-badge appearance="warning" size="small">进阶</fluent-badge>

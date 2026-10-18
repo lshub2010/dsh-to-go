@@ -71,8 +71,18 @@ html, body { background: var(--colorNeutralBackground3); color: var(--colorNeutr
 header {
   background: var(--colorNeutralBackground2);
   border-bottom: 1px solid var(--colorNeutralStroke3);
-  padding: 10px 20px;
+  /* 顶栏＝标题栏：一条 44px 的横条，左侧应用信息、右侧操作与窗口按钮。
+     高度必须和 DshLauncher.cs 的 TitleBarHeight 一致。
+     这里必须 nowrap：否则窗口变窄时 legacy.css 的 flex-wrap:wrap 会让它折成两行。 */
+  padding: 0 0 0 14px;
   gap: 12px;
+  height: 44px;
+  min-height: 44px;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
 }
 header h1 {
   font-size: var(--fontSizeBase400);
@@ -253,3 +263,97 @@ fluent-badge[appearance="accent"] { --accent-foreground-rest: var(--colorBrandFo
 
 /* hidden 必须真的隐藏：老样式里 .btn{display:inline-flex} 这类规则会盖掉 UA 的 [hidden] */
 [hidden] { display: none !important; }
+
+
+/* ---- 浅色：官方 webLightTheme 取值，覆盖上面 :root 的深色令牌 ---- */
+html[data-theme="light"] {
+  --colorNeutralBackground1: #ffffff;
+  --colorNeutralBackground2: #fafafa;
+  --colorNeutralBackground3: #f5f5f5;
+  --colorNeutralBackground4: #f0f0f0;
+  --colorNeutralForeground1: #242424;
+  --colorNeutralForeground2: #424242;
+  --colorNeutralForeground3: #616161;
+  --colorNeutralForeground4: #707070;
+  --colorNeutralStroke1: #d1d1d1;
+  --colorNeutralStroke2: #e0e0e0;
+  --colorNeutralStroke3: #f0f0f0;
+  --colorNeutralStrokeAccessible: #616161;
+  --colorBrandBackground: #0f6cbd;
+  --colorBrandBackgroundHover: #115ea3;
+  --colorBrandForeground1: #0f6cbd;
+  --colorBrandStroke1: #0f6cbd;
+  --colorStatusSuccessForeground1: #0e700e;
+  --colorStatusDangerForeground1: #b10e1c;
+  --colorStatusDangerBackground1: #fdf3f4;
+  --colorStatusWarningForeground1: #bc4b09;
+}
+
+/* 解锁状态是「状态」不是「操作」：跟标题同排，做成小一号的 chip，
+   右侧 hdr-actions 里只剩按钮，避免药丸夹在按钮中间、大小还不一致。 */
+header h1 .pill {
+  font-size: var(--fontSizeBase200);
+  padding: 1px 8px;
+  margin-left: 2px;
+  color: var(--colorNeutralForeground3);
+}
+header h1 .pill.ok { color: var(--accent); }
+header .hdr-actions { align-items: center; }
+header .hdr-actions .btn { min-height: 32px; }
+
+/* ---- 窗口按钮（只在启动器宿主里显示）---- */
+header .hdr-actions { padding-right: 0; gap: 6px; }
+.tb-ctl { display: flex; height: 44px; margin: 0; }
+.tb-ctl[hidden] { display: none !important; }
+.tb-ctl { gap: 0; padding: 0; }
+.tb-ctl button {
+  width: 46px; height: 44px; display: grid; place-items: center;
+  border: 0; background: transparent; color: var(--colorNeutralForeground1);
+  cursor: default; padding: 0; border-radius: 0;
+}
+.tb-ctl button:hover { background: var(--colorNeutralBackground1); }
+.tb-ctl button:active { background: var(--colorNeutralBackground3); }
+.tb-ctl #tb-close:hover { background: #c42b1c; color: #fff; }
+.tb-ctl #tb-close:active { background: #a32219; }
+.tb-ctl #tb-close:active { background: #a32219; color: #fff; }
+.tb-ctl .i-restore { display: none; }
+.tb-ctl #tb-max[data-max="1"] .i-max { display: none; }
+.tb-ctl #tb-max[data-max="1"] .i-restore { display: block; }
+
+/* ---- 滚动条：细、圆角、跟随主题，不再用系统那条浅灰粗条 ---- */
+* { scrollbar-width: thin; scrollbar-color: var(--colorNeutralStroke2) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--colorNeutralStroke2);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--colorNeutralStroke1); background-clip: content-box; }
+::-webkit-scrollbar-thumb:active { background: var(--colorNeutralForeground4); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---- 滚动容器 ----
+   让滚动条只出现在内容区：否则页面级滚动条会从标题栏右边一路贯穿上去，
+   顶栏里那三颗窗口按钮旁边就多出一根浅灰粗条（很难看）。
+   body 用纵向 flex：header / nav 固定，main 自己滚。 */
+html, body { height: 100%; overflow: hidden; }
+body { display: flex; flex-direction: column; }
+header, nav { flex: 0 0 auto; }
+main { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; }
+/* 弹层（登录/任务详情）本来就 fixed，不受影响 */
+
+/* 布局自适应由各分区自己的 <style> 处理（它们的 ID 选择器优先级更高） */
+
+/* ---- 窗口变窄时不能"塌成两行" ----
+   1) 菜单栏：永远单行，放不下就横向滚动（不换行、不叠行）；
+   2) 顶栏：标题固定，说明文字可省略号截断，右侧按钮不放宽。 */
+nav { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+nav::-webkit-scrollbar { display: none; }
+nav button { flex: 0 0 auto; }
+header h1 { flex: 1 1 auto; min-width: 0; }
+header h1 .app-title { flex: 0 0 auto; }
+header h1 .sub { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+header h1 .pill { flex: 0 0 auto; }
+header .hdr-actions { flex: 0 0 auto; }

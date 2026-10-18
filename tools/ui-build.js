@@ -25,7 +25,7 @@ const OUT = path.join(ROOT, 'ui', 'app.html');
 const FLUENT_DIR = path.join(ROOT, 'third_party', 'fluent');
 
 const read = (p, dflt) => { try { return fs.readFileSync(p, 'utf8'); } catch (e) { if (dflt !== undefined) return dflt; throw new Error('缺少文件：' + path.relative(ROOT, p)); } };
-const SECTIONS = ['overview', 'sites', 'upgrade', 'diag', 'plugins'];
+const SECTIONS = ['overview', 'sites', 'upgrade', 'diag', 'plugins', 'launcher'];
 
 function build() {
   const head = read(path.join(SRC, 'head.html'));
@@ -36,6 +36,8 @@ function build() {
     read(path.join(FLUENT_DIR, 'fluent-theme.css'), '/* 未提供主题文件，使用 src/fluent-overrides.css 里的兜底变量 */'),
     '/* ===== Fluent 2 覆盖层（src/fluent-overrides.css）===== */',
     read(path.join(SRC, 'fluent-overrides.css'), ''),
+    '/* ===== 外观层（src/appearance.css）：流体背景 / 主色 / 动效 ===== */',
+    read(path.join(SRC, 'appearance.css'), ''),
   ].join('\n');
 
   if (!head.includes('<!--{{CSS}}-->')) throw new Error('src/head.html 缺少 CSS 占位 <!--{{CSS}}-->');
