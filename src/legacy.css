@@ -1,6 +1,7 @@
 /* 设计基线来自 ui-ux-pro-max 的 Dark Mode (OLED)：深色优先、低发白、高对比。
    字体只用系统自带（U 盘可能离线，不能依赖外链字体）。 */
 :root{
+  color-scheme:dark;
   --bg:#0F172A; --card:#1B2336; --card-2:#151D2E; --primary:#1E293B; --secondary:#334155;
   --fg:#F8FAFC; --muted:#94A3B8; --border:#475569; --accent:#22C55E; --on-accent:#0F172A;
   --danger:#EF4444; --warn:#F59E0B; --code:#0B1220;
@@ -37,7 +38,7 @@ nav button{display:flex;align-items:center;gap:6px;min-height:40px;background:tr
   color:var(--muted);padding:8px 14px;border-radius:var(--r);transition:background var(--t-fast) var(--e-out),color var(--t-fast) var(--e-out),border-color var(--t-fast) var(--e-out)}
 nav button:hover{background:var(--primary);color:var(--fg)}
 nav button[aria-selected="true"]{background:var(--primary);border-color:var(--border);color:var(--fg);font-weight:600}
-main{padding:18px 20px 80px;max-width:1080px;margin:0 auto}
+main{padding:16px 22px 72px;max-width:1440px;margin:0 auto}
 section[hidden]{display:none}
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;margin-bottom:var(--gap)}
 .card.tight{padding:12px 14px}
@@ -159,7 +160,7 @@ details.more > .body .ln{display:block}
 #banner[hidden]{display:none}
 #banner.danger{background:rgba(239,68,68,.18)}
 #banner .b-t{font-weight:600;margin-right:4px}
-#banner code{background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;font-size:12px;font-family:var(--font-mono)}
+#banner code{background:var(--banner-code-bg);padding:1px 5px;border-radius:4px;font-size:12px;font-family:var(--font-mono)}
 /* 插件卡片 */
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
 .pcard{display:flex;gap:12px;padding:12px;border:1px solid var(--border);border-radius:var(--r);background:var(--card-2)}
@@ -183,3 +184,21 @@ details.more > .body .ln{display:block}
 .pv{max-height:78vh;overflow:auto;width:min(760px,92vw)}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin-top:10px;font-size:13px}
 .kv .k{color:var(--muted);white-space:nowrap}
+
+
+/* ===========================================================================
+   浅色主题（html[data-theme="light"]）
+   只有一个 :root 常量表，所以换肤＝覆盖这套变量；组件样式一行都不用改。
+   标题栏同步由启动器负责（页面发 dsh.theme 消息，壳把 DWM 颜色也跟着换）。
+   =========================================================================== */
+html[data-theme="light"]{
+  color-scheme:light;
+  --bg:#F3F5F9; --card:#FFFFFF; --card-2:#F7F9FC; --primary:#E9EEF6; --secondary:#DCE3EC;
+  --fg:#101828; --muted:#5B6878; --border:#C9D2DE; --accent:#15803D; --on-accent:#FFFFFF;
+  --danger:#DC2626; --warn:#B45309; --code:#F1F5F9;
+  --banner-code-bg:rgba(15,23,42,.07);
+}
+/* 浅色下阴影要更实一点，否则白卡片在白底上没有层次 */
+html[data-theme="light"] .card{box-shadow:0 1px 2px rgba(16,24,40,.06)}
+html[data-theme="light"] .pill.ok{border-color:rgba(21,128,61,.45)}
+html[data-theme="light"] .dot.on{box-shadow:0 0 6px rgba(21,128,61,.5)}

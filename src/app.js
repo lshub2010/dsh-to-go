@@ -787,6 +787,81 @@ function pickedVersion() {
   if (!el('u-ver-manual-box').hidden) return el('u-ver-raw').value.trim();
   return String(el('u-ver').value || '').trim();
 }
+
+
+/* ---------------------------------------------------------------- 自绘标题栏
+   顶栏就是标题栏（和页面第一条 header 合并在一起），只在启动器宿主里出现；
+   浏览器回退（dsh-ui.cmd）时不显示窗口按钮，用浏览器自己的标题栏。
+   拖拽/缩放/最大化边界在宿主里做（WndProc）；页面负责：
+     1) 画三颗按钮并发消息；
+     2) 告诉宿主「从哪一列开始属于交互区」——右边是按钮，左边才是可拖动的空白。 */
+function initTitlebar() {
+  const bar = el('titlebar');
+  const host = window.chrome && window.chrome.webview;
+  if (!bar || !host) return;
+  el('tb-ctl').hidden = false;
+  const post = (msg) => { try { host.postMessage(msg); } catch (e) { /* 宿主不在 */ } };
+  el('tb-min').addEventListener('click', () => post({ type: 'dsh.win.min' }));
+  el('tb-max').addEventListener('click', () => post({ type: 'dsh.win.max' }));
+  el('tb-close').addEventListener('click', () => post({ type: 'dsh.win.close' }));
+  host.addEventListener('message', (ev) => {
+    const d = ev.data || {};
+    if (d.type !== 'dsh.win.state') return;
+    const b = el('tb-max');
+    if (!b) return;
+    b.dataset.max = d.maximized ? '1' : '0';
+    b.setAttribute('aria-label', d.maximized ? '还原' : '最大化');
+  });
+  // 交互区从 #tb-actions 的左边缘开始：这条线左边＝标题栏（可拖），右边＝网页（可点）
+  const syncHit = () => {
+    const act = el('tb-actions');
+    if (!act) return;
+    const x = Math.round(act.getBoundingClientRect().left);
+    post({ type: 'dsh.win.hit', captionRight: x });
+  };
+  // 拖窗与双击最大化：交给宿主的非客户区拖动，这样贴边分屏、Snap 布局也是系统原生的
+  bar.addEventListener('mousedown', (ev) => {
+    if (ev.button !== 0) return;
+    if (ev.target.closest('button, a, input, select, .pb')) return;
+    post({ type: 'dsh.win.drag' });
+  });
+  bar.addEventListener('dblclick', (ev) => {
+    if (ev.target.closest('button, a, input, select, .pb')) return;
+    post({ type: 'dsh.win.max' });
+  });
+  syncHit();
+  window.addEventListener('resize', syncHit);
+  if (window.ResizeObserver) new ResizeObserver(syncHit).observe(bar);
+}
+initTitlebar();
+
+/* ---------------------------------------------------------------- 主题
+   深/浅两套皮肤只靠 CSS 变量切换（html[data-theme]），组件样式不用动。
+   选择存在服务端的 data/ui-prefs.json（跟盘走，不写浏览器存储）；切换时再通知宿主，
+   把原生标题栏换成同一套颜色，免得又出现「边框和内容割裂」。 */
+function applyTheme(theme, persist) {
+  const t = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = t;
+  const label = el('btn-theme-label');
+  if (label) label.textContent = t === 'light' ? '深色' : '浅色';
+  const b = el('btn-theme');
+  if (b) b.setAttribute('aria-pressed', t === 'light' ? 'true' : 'false');
+  try {
+    if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage({ type: 'dsh.theme', theme: t });
+  } catch (e) { /* 浏览器回退路径没有宿主 */ }
+  if (persist) api('/api/prefs', { theme: t }).catch(() => {});
+}
+async function loadTheme() {
+  let saved = 'dark';
+  try { const p = await api('/api/prefs'); if (p && (p.theme === 'light' || p.theme === 'dark')) saved = p.theme; } catch (e) { /* 老服务没有这个接口 */ }
+  applyTheme(saved, false);
+}
+if (el('btn-theme')) {
+  el('btn-theme').addEventListener('click', () => {
+    applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light', true);
+  });
+}
+
 el('btn-upgrade').addEventListener('click', (e) => {
   const v = pickedVersion();
   if (!v) { flash('up-out', '请先从列表里选一个版本（或用「手动填版本」）。', 'err'); return; }
@@ -1338,6 +1413,7 @@ el('btn-plug-allow').addEventListener('click', (e) => {
   } else {
     el('login-ov').hidden = true;
   }
+  await loadTheme();     // 主题要在首屏渲染前定下来
   await loadSites().catch(() => {});
   loadVersions();      // 版本列表（失败也不影响其它功能，页面会提示改用手动填）
   loadNpmSource();     // 下载源偏好（老服务没有这个接口时静默跳过）

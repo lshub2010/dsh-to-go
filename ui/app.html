@@ -10,6 +10,7 @@
 /* 设计基线来自 ui-ux-pro-max 的 Dark Mode (OLED)：深色优先、低发白、高对比。
    字体只用系统自带（U 盘可能离线，不能依赖外链字体）。 */
 :root{
+  color-scheme:dark;
   --bg:#0F172A; --card:#1B2336; --card-2:#151D2E; --primary:#1E293B; --secondary:#334155;
   --fg:#F8FAFC; --muted:#94A3B8; --border:#475569; --accent:#22C55E; --on-accent:#0F172A;
   --danger:#EF4444; --warn:#F59E0B; --code:#0B1220;
@@ -46,7 +47,7 @@ nav button{display:flex;align-items:center;gap:6px;min-height:40px;background:tr
   color:var(--muted);padding:8px 14px;border-radius:var(--r);transition:background var(--t-fast) var(--e-out),color var(--t-fast) var(--e-out),border-color var(--t-fast) var(--e-out)}
 nav button:hover{background:var(--primary);color:var(--fg)}
 nav button[aria-selected="true"]{background:var(--primary);border-color:var(--border);color:var(--fg);font-weight:600}
-main{padding:18px 20px 80px;max-width:1080px;margin:0 auto}
+main{padding:16px 22px 72px;max-width:1440px;margin:0 auto}
 section[hidden]{display:none}
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;margin-bottom:var(--gap)}
 .card.tight{padding:12px 14px}
@@ -168,7 +169,7 @@ details.more > .body .ln{display:block}
 #banner[hidden]{display:none}
 #banner.danger{background:rgba(239,68,68,.18)}
 #banner .b-t{font-weight:600;margin-right:4px}
-#banner code{background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;font-size:12px;font-family:var(--font-mono)}
+#banner code{background:var(--banner-code-bg);padding:1px 5px;border-radius:4px;font-size:12px;font-family:var(--font-mono)}
 /* 插件卡片 */
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
 .pcard{display:flex;gap:12px;padding:12px;border:1px solid var(--border);border-radius:var(--r);background:var(--card-2)}
@@ -192,6 +193,24 @@ details.more > .body .ln{display:block}
 .pv{max-height:78vh;overflow:auto;width:min(760px,92vw)}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin-top:10px;font-size:13px}
 .kv .k{color:var(--muted);white-space:nowrap}
+
+
+/* ===========================================================================
+   浅色主题（html[data-theme="light"]）
+   只有一个 :root 常量表，所以换肤＝覆盖这套变量；组件样式一行都不用改。
+   标题栏同步由启动器负责（页面发 dsh.theme 消息，壳把 DWM 颜色也跟着换）。
+   =========================================================================== */
+html[data-theme="light"]{
+  color-scheme:light;
+  --bg:#F3F5F9; --card:#FFFFFF; --card-2:#F7F9FC; --primary:#E9EEF6; --secondary:#DCE3EC;
+  --fg:#101828; --muted:#5B6878; --border:#C9D2DE; --accent:#15803D; --on-accent:#FFFFFF;
+  --danger:#DC2626; --warn:#B45309; --code:#F1F5F9;
+  --banner-code-bg:rgba(15,23,42,.07);
+}
+/* 浅色下阴影要更实一点，否则白卡片在白底上没有层次 */
+html[data-theme="light"] .card{box-shadow:0 1px 2px rgba(16,24,40,.06)}
+html[data-theme="light"] .pill.ok{border-color:rgba(21,128,61,.45)}
+html[data-theme="light"] .dot.on{box-shadow:0 0 6px rgba(21,128,61,.5)}
 
 /* ===== Fluent 2 主题（third_party/fluent/fluent-theme.css）===== */
 /* Fluent 2 (Web) dark theme tokens for dsh-to-go.
@@ -746,8 +765,18 @@ html, body { background: var(--colorNeutralBackground3); color: var(--colorNeutr
 header {
   background: var(--colorNeutralBackground2);
   border-bottom: 1px solid var(--colorNeutralStroke3);
-  padding: 10px 20px;
+  /* 顶栏＝标题栏：一条 44px 的横条，左侧应用信息、右侧操作与窗口按钮。
+     高度必须和 DshLauncher.cs 的 TitleBarHeight 一致。
+     这里必须 nowrap：否则窗口变窄时 legacy.css 的 flex-wrap:wrap 会让它折成两行。 */
+  padding: 0 0 0 14px;
   gap: 12px;
+  height: 44px;
+  min-height: 44px;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
 }
 header h1 {
   font-size: var(--fontSizeBase400);
@@ -929,12 +958,96 @@ fluent-badge[appearance="accent"] { --accent-foreground-rest: var(--colorBrandFo
 /* hidden 必须真的隐藏：老样式里 .btn{display:inline-flex} 这类规则会盖掉 UA 的 [hidden] */
 [hidden] { display: none !important; }
 
+
+/* ---- 浅色：官方 webLightTheme 取值，覆盖上面 :root 的深色令牌 ---- */
+html[data-theme="light"] {
+  --colorNeutralBackground1: #ffffff;
+  --colorNeutralBackground2: #fafafa;
+  --colorNeutralBackground3: #f5f5f5;
+  --colorNeutralBackground4: #f0f0f0;
+  --colorNeutralForeground1: #242424;
+  --colorNeutralForeground2: #424242;
+  --colorNeutralForeground3: #616161;
+  --colorNeutralForeground4: #707070;
+  --colorNeutralStroke1: #d1d1d1;
+  --colorNeutralStroke2: #e0e0e0;
+  --colorNeutralStroke3: #f0f0f0;
+  --colorNeutralStrokeAccessible: #616161;
+  --colorBrandBackground: #0f6cbd;
+  --colorBrandBackgroundHover: #115ea3;
+  --colorBrandForeground1: #0f6cbd;
+  --colorBrandStroke1: #0f6cbd;
+  --colorStatusSuccessForeground1: #0e700e;
+  --colorStatusDangerForeground1: #b10e1c;
+  --colorStatusDangerBackground1: #fdf3f4;
+  --colorStatusWarningForeground1: #bc4b09;
+}
+
+/* 解锁状态是「状态」不是「操作」：跟标题同排，做成小一号的 chip，
+   右侧 hdr-actions 里只剩按钮，避免药丸夹在按钮中间、大小还不一致。 */
+header h1 .pill {
+  font-size: var(--fontSizeBase200);
+  padding: 1px 8px;
+  margin-left: 2px;
+  color: var(--colorNeutralForeground3);
+}
+header h1 .pill.ok { color: var(--accent); }
+header .hdr-actions { align-items: center; }
+header .hdr-actions .btn { min-height: 32px; }
+
+/* ---- 窗口按钮（只在启动器宿主里显示）---- */
+header .hdr-actions { padding-right: 0; gap: 6px; }
+.tb-ctl { display: flex; height: 44px; margin: 0; }
+.tb-ctl[hidden] { display: none !important; }
+.tb-ctl { gap: 0; padding: 0; }
+.tb-ctl button {
+  width: 46px; height: 44px; display: grid; place-items: center;
+  border: 0; background: transparent; color: var(--colorNeutralForeground1);
+  cursor: default; padding: 0; border-radius: 0;
+}
+.tb-ctl button:hover { background: var(--colorNeutralBackground1); }
+.tb-ctl button:active { background: var(--colorNeutralBackground3); }
+.tb-ctl #tb-close:hover { background: #c42b1c; color: #fff; }
+.tb-ctl #tb-close:active { background: #a32219; }
+.tb-ctl #tb-close:active { background: #a32219; color: #fff; }
+.tb-ctl .i-restore { display: none; }
+.tb-ctl #tb-max[data-max="1"] .i-max { display: none; }
+.tb-ctl #tb-max[data-max="1"] .i-restore { display: block; }
+
+/* ---- 滚动条：细、圆角、跟随主题，不再用系统那条浅灰粗条 ---- */
+* { scrollbar-width: thin; scrollbar-color: var(--colorNeutralStroke2) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--colorNeutralStroke2);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--colorNeutralStroke1); background-clip: content-box; }
+::-webkit-scrollbar-thumb:active { background: var(--colorNeutralForeground4); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---- 滚动容器 ----
+   让滚动条只出现在内容区：否则页面级滚动条会从标题栏右边一路贯穿上去，
+   顶栏里那三颗窗口按钮旁边就多出一根浅灰粗条（很难看）。
+   body 用纵向 flex：header / nav 固定，main 自己滚。 */
+html, body { height: 100%; overflow: hidden; }
+body { display: flex; flex-direction: column; }
+header, nav { flex: 0 0 auto; }
+main { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; }
+/* 弹层（登录/任务详情）本来就 fixed，不受影响 */
+
+/* 布局自适应由各分区自己的 <style> 处理（它们的 ID 选择器优先级更高） */
+
 </style>
 </head>
 
 
 <body>
-<header>
+<!-- 一条顶栏：应用信息 + 操作按钮 + 窗口按钮。
+     宿主里它就是标题栏：左侧空白可拖动、双击最大化；从 #tb-actions 往右是交互区。 -->
+<header id="titlebar">
   <h1>
     <svg class="app-mark" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
       <rect x="2.5" y="4.5" width="19" height="15" rx="3.5"/>
@@ -942,10 +1055,30 @@ fluent-badge[appearance="accent"] { --accent-foreground-rest: var(--colorBrandFo
     </svg>
     <span class="app-title">便携版 DeepSeek Harness</span>
     <span class="sub" id="hdr-sub">正在读取状态…</span>
-  </h1>
-  <div class="row hdr-actions">
     <span class="pill" id="hdr-login"><span class="dot off"></span> 未解锁</span>
+  </h1>
+  <div class="row hdr-actions" id="tb-actions">
+    <button class="btn" id="btn-theme" type="button" aria-pressed="false" title="深色 / 浅色切换（会记住你的选择）">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="vertical-align:-2px">
+        <circle cx="12" cy="12" r="4.2"/>
+        <path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/>
+      </svg>
+      <span id="btn-theme-label">浅色</span>
+    </button>
     <button class="btn" id="btn-logout" hidden>退出解锁</button>
+    <!-- 窗口按钮：只有启动器宿主里才出现（浏览器回退时用浏览器自己的标题栏） -->
+    <div class="tb-ctl" id="tb-ctl" hidden>
+      <button id="tb-min" type="button" aria-label="最小化">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5h8" stroke="currentColor" stroke-width="1.1"/></svg>
+      </button>
+      <button id="tb-max" type="button" aria-label="最大化">
+        <svg class="i-max" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1.2" y="1.2" width="7.6" height="7.6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+        <svg class="i-restore" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="3" width="6" height="6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M3.4 3V2.2A1.2 1.2 0 0 1 4.6 1H7.8a1.2 1.2 0 0 1 1.2 1.2v3.2A1.2 1.2 0 0 1 7.8 6.6H7" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+      </button>
+      <button id="tb-close" type="button" aria-label="关闭">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.4 1.4l7.2 7.2M8.6 1.4l-7.2 7.2" stroke="currentColor" stroke-width="1.1"/></svg>
+      </button>
+    </div>
   </div>
 </header>
 
@@ -966,6 +1099,13 @@ fluent-badge[appearance="accent"] { --accent-foreground-rest: var(--colorBrandFo
     #tab-overview{display:flex;flex-direction:column;gap:12px}
     /* 标签页用 section[hidden] 切换：ID 优先级会压过 section[hidden]{display:none}，必须显式补回 */
     #tab-overview[hidden]{display:none}
+    /* 宽窗口排两列：卡片不再被拉成"左边一堆字、右边一片空" */
+    @media (min-width:1200px){
+      #tab-overview{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+      #tab-overview > .card{margin-bottom:0;min-width:0}
+      /* 尾部两张（密钥与站点、最近任务）整行铺开；注意 <style> 也算子元素，所以用 nth-last-child */
+      #tab-overview > .card:nth-last-child(1), #tab-overview > .card:nth-last-child(2){grid-column:1 / -1}
+    }
     #tab-overview .card{margin-bottom:0;border-radius:var(--borderRadiusXLarge);padding:16px 18px;
       transition:border-color var(--t-fast) var(--e-out),background var(--t-fast) var(--e-out)}
     #tab-overview .card > h2{display:flex;align-items:center;gap:8px;margin:0 0 12px;
@@ -1675,7 +1815,7 @@ fluent-badge[appearance="accent"] { --accent-foreground-rest: var(--colorBrandFo
     </div>
 
     <!-- ② 进阶路径：显式指定槽位（信息层级降一档） -->
-    <div class="card up-adv">
+    <div class="card up-adv wide">
       <div class="up-sec">
         <h2>单独指定槽位版本</h2>
         <fluent-badge appearance="warning" size="small">进阶</fluent-badge>
@@ -6891,6 +7031,81 @@ function pickedVersion() {
   if (!el('u-ver-manual-box').hidden) return el('u-ver-raw').value.trim();
   return String(el('u-ver').value || '').trim();
 }
+
+
+/* ---------------------------------------------------------------- 自绘标题栏
+   顶栏就是标题栏（和页面第一条 header 合并在一起），只在启动器宿主里出现；
+   浏览器回退（dsh-ui.cmd）时不显示窗口按钮，用浏览器自己的标题栏。
+   拖拽/缩放/最大化边界在宿主里做（WndProc）；页面负责：
+     1) 画三颗按钮并发消息；
+     2) 告诉宿主「从哪一列开始属于交互区」——右边是按钮，左边才是可拖动的空白。 */
+function initTitlebar() {
+  const bar = el('titlebar');
+  const host = window.chrome && window.chrome.webview;
+  if (!bar || !host) return;
+  el('tb-ctl').hidden = false;
+  const post = (msg) => { try { host.postMessage(msg); } catch (e) { /* 宿主不在 */ } };
+  el('tb-min').addEventListener('click', () => post({ type: 'dsh.win.min' }));
+  el('tb-max').addEventListener('click', () => post({ type: 'dsh.win.max' }));
+  el('tb-close').addEventListener('click', () => post({ type: 'dsh.win.close' }));
+  host.addEventListener('message', (ev) => {
+    const d = ev.data || {};
+    if (d.type !== 'dsh.win.state') return;
+    const b = el('tb-max');
+    if (!b) return;
+    b.dataset.max = d.maximized ? '1' : '0';
+    b.setAttribute('aria-label', d.maximized ? '还原' : '最大化');
+  });
+  // 交互区从 #tb-actions 的左边缘开始：这条线左边＝标题栏（可拖），右边＝网页（可点）
+  const syncHit = () => {
+    const act = el('tb-actions');
+    if (!act) return;
+    const x = Math.round(act.getBoundingClientRect().left);
+    post({ type: 'dsh.win.hit', captionRight: x });
+  };
+  // 拖窗与双击最大化：交给宿主的非客户区拖动，这样贴边分屏、Snap 布局也是系统原生的
+  bar.addEventListener('mousedown', (ev) => {
+    if (ev.button !== 0) return;
+    if (ev.target.closest('button, a, input, select, .pb')) return;
+    post({ type: 'dsh.win.drag' });
+  });
+  bar.addEventListener('dblclick', (ev) => {
+    if (ev.target.closest('button, a, input, select, .pb')) return;
+    post({ type: 'dsh.win.max' });
+  });
+  syncHit();
+  window.addEventListener('resize', syncHit);
+  if (window.ResizeObserver) new ResizeObserver(syncHit).observe(bar);
+}
+initTitlebar();
+
+/* ---------------------------------------------------------------- 主题
+   深/浅两套皮肤只靠 CSS 变量切换（html[data-theme]），组件样式不用动。
+   选择存在服务端的 data/ui-prefs.json（跟盘走，不写浏览器存储）；切换时再通知宿主，
+   把原生标题栏换成同一套颜色，免得又出现「边框和内容割裂」。 */
+function applyTheme(theme, persist) {
+  const t = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = t;
+  const label = el('btn-theme-label');
+  if (label) label.textContent = t === 'light' ? '深色' : '浅色';
+  const b = el('btn-theme');
+  if (b) b.setAttribute('aria-pressed', t === 'light' ? 'true' : 'false');
+  try {
+    if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage({ type: 'dsh.theme', theme: t });
+  } catch (e) { /* 浏览器回退路径没有宿主 */ }
+  if (persist) api('/api/prefs', { theme: t }).catch(() => {});
+}
+async function loadTheme() {
+  let saved = 'dark';
+  try { const p = await api('/api/prefs'); if (p && (p.theme === 'light' || p.theme === 'dark')) saved = p.theme; } catch (e) { /* 老服务没有这个接口 */ }
+  applyTheme(saved, false);
+}
+if (el('btn-theme')) {
+  el('btn-theme').addEventListener('click', () => {
+    applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light', true);
+  });
+}
+
 el('btn-upgrade').addEventListener('click', (e) => {
   const v = pickedVersion();
   if (!v) { flash('up-out', '请先从列表里选一个版本（或用「手动填版本」）。', 'err'); return; }
@@ -7442,6 +7657,7 @@ el('btn-plug-allow').addEventListener('click', (e) => {
   } else {
     el('login-ov').hidden = true;
   }
+  await loadTheme();     // 主题要在首屏渲染前定下来
   await loadSites().catch(() => {});
   loadVersions();      // 版本列表（失败也不影响其它功能，页面会提示改用手动填）
   loadNpmSource();     // 下载源偏好（老服务没有这个接口时静默跳过）
