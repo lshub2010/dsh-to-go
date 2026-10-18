@@ -248,6 +248,10 @@ namespace DshToGo
         // 构造期设置 Size 会触发 OnResize，那时还没读回上次的尺寸；
         // 没有这个闸门就会先把默认值写回文件、把记忆覆盖掉（踩过）。
         private bool _stateReady;
+        // 内容缩放：窗口越宽，整套 UI（字/卡片/按钮）一起放大，而不是只拉宽留白。
+        // 基准 1180 CSS px —— 1280 的窗口约 1.08，1920 约 1.6，最小 0.8、最大 1.75。
+        // 内容缩放基准宽度（页面用，宿主只做命中测试换算保持 1:1）
+        private double _zoom = 1.0;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct WINPOINT { public int X; public int Y; }
@@ -298,7 +302,8 @@ namespace DshToGo
                 // 顶栏靠左的部分＝标题栏：可拖、双击最大化；
                 // 顶栏最右边 138px 留给页面里的三颗按钮，命中返回 HTCLIENT 让点击进网页。
                 int dragRight = _captionRight > 0 ? _captionRight : w - CaptionButtonsWidth;
-                if (cp.Y < TitleBarHeight && cp.X < dragRight)
+                int barH = TitleBarHeight;
+                if (cp.Y < barH && cp.X < dragRight)
                 {
                     m.Result = (IntPtr)HTCAPTION;
                 }
@@ -326,6 +331,20 @@ namespace DshToGo
         }
 
         // 页面按钮 → 宿主：最小化 / 最大化还原 / 关闭（关闭走和原生关闭按钮一样的流程）
+        private void ApplyZoom()
+        {
+            if (!_webReady || _web == null) return;
+            try
+            {
+                int w = ClientSize.Width;
+                if (w <= 0) return;
+                // 缩放在页面里只作用于内容区（main），顶栏和菜单栏保持原尺寸。
+                // 宿主这边只负责不变，避免把菜单也一起缩放。
+                return;
+            }
+            catch (Exception ex) { Host.Log("zoom failed: " + ex.Message); }
+        }
+
         private void PostWindowState()
         {
             if (!_webReady || _web == null || _web.CoreWebView2 == null) return;
@@ -341,6 +360,7 @@ namespace DshToGo
         {
             base.OnResize(e);
             PostWindowState();
+            ApplyZoom();
             if (WindowState == FormWindowState.Normal) SaveWindowState();
         }
 
@@ -466,7 +486,7 @@ namespace DshToGo
             Size = new Size(1280, 860);
             StartPosition = FormStartPosition.CenterScreen;
             LoadWindowState();   // 上次的窗口大小/位置（没有就居中）
-            MinimumSize = new Size(880, 620);
+            MinimumSize = new Size(960, 660);
             // 无边框：标题栏由页面自己画（顶部 40px 是拖拽区，右侧 138px 是三个按钮），
             // 缩放边、最大化边界、双击最大化都在下面的 WndProc 里补回来。
             FormBorderStyle = FormBorderStyle.None;
@@ -786,6 +806,7 @@ namespace DshToGo
         {
             if (e.IsSuccess) Host.Log("page loaded");
             if (e.IsSuccess) PostWindowState();
+            if (e.IsSuccess) ApplyZoom();
             else Host.Log("page load failed: " + e.WebErrorStatus);
 
             if (_probeDone) return;
