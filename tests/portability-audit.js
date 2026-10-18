@@ -103,7 +103,9 @@ const LICENSE_REQUIRED = [
   ['third_party/fluent/LICENSE', 'Fluent UI / FAST（MIT）'],
   ['third_party/webview2/LICENSE.txt', 'WebView2 SDK（BSD-3 风格）'],
   ['third_party/webview2/NOTICE.txt', 'WebView2 SDK 第三方声明'],
-  ['runtime/node/LICENSE', 'Node.js（含 V8/OpenSSL/ICU 等捆绑依赖声明）'],
+  ...(fs.existsSync(path.join(ROOT, 'runtime', 'node'))
+    ? [['runtime/node/LICENSE', 'Node.js（含 V8/OpenSSL/ICU 等捆绑依赖声明）']]
+    : []),   // runtime/ 不入库：CI 里没有便携 node，就跳过这一条
 ];
 const missing = LICENSE_REQUIRED.filter(([f]) => !fs.existsSync(path.join(ROOT, f)));
 for (const [f, why] of missing) problems.push('缺少许可证文件：' + f + '（' + why + '）');

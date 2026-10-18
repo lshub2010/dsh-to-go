@@ -459,6 +459,8 @@ async function handleApi(req, res, url) {
     '/api/plugins/toggle', '/api/plugins/install', '/api/plugins/uninstall', '/api/plugins/allow-version',
     '/api/plugins/pnpm-setup',
     '/api/sites', '/api/sites/delete', '/api/slot/switch', '/api/overlay/rebuild',
+    // 下载源决定「装进来的代码从哪来」，属于供应链入口，必须解锁后才能改
+    '/api/npm-source',
     '/api/dsh/start', '/api/dsh/stop', '/api/backup'];
   if (req.method === 'POST' && NEEDS_LOGIN.indexOf(p) >= 0 && !requireLogin()) {
     return send(401, { error: '需要先输入口令解锁（口令只存在本服务的内存里）' });

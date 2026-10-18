@@ -24,15 +24,24 @@ function ensure() {
         '# 盘内 npm 配置。想用私有源 / 代理就写在这里，不要依赖宿主的 ~/.npmrc。\n'
         + '# 例：registry=https://registry.npmmirror.com\n', 'utf8');
     }
-  } catch (e) { /* 写不了也不阻断：npm 会退回默认配置 */ }
-  return NPMRC;
+    try { fs.chmodSync(NPMRC, 0o600); } catch (e) { /* Windows 上 chmod 能力有限，忽略 */ }
+    return NPMRC;
+  } catch (e) {
+    // 写不出来就返回 null：调用方会跳过设置，而不是把不存在的路径塞给 npm
+    return null;
+  }
+}
+
+/** 把一个 env 对象补上 userconfig（拿不到路径就什么都不做）。 */
+function apply(e) {
+  const p = ensure();
+  if (p) e.npm_config_userconfig = p; else delete e.npm_config_userconfig;
+  return e;
 }
 
 /** 在当前进程环境上补 npm_config_userconfig（不改其它变量）。 */
 function env(base) {
-  const e = Object.assign({}, base || process.env);
-  e.npm_config_userconfig = ensure();
-  return e;
+  return apply(Object.assign({}, base || process.env));
 }
 
-module.exports = { NPMRC, ensure, env };
+module.exports = { NPMRC, ensure, env, apply };

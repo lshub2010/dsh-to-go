@@ -83,8 +83,16 @@ function uiServerPids() {
   else bad('本地服务就绪', logText.split('\n').slice(-4).join(' | '));
   if (/page loaded/.test(logText)) ok('页面加载完成');
   else bad('页面加载完成', logText.split('\n').slice(-4).join(' | '));
-  if (/selftest bridge: "dsh\.token token-length=\d+"/.test(logText)) ok('令牌桥把令牌交给页面', '日志只有长度');
-  else bad('令牌桥把令牌交给页面', '日志里没有 selftest bridge 行');
+  // 这行是页面加载完成后约 1 秒才写的（页面 selftest 完成才 post），固定读一次会误判，
+  // 所以轮询等它出现（最多 10 秒）。
+  let bridgeSeen = false;
+  for (let i = 0; i < 50; i++) {
+    if (/selftest bridge: "dsh\.token token-length=\d+"/.test(logText)) { bridgeSeen = true; break; }
+    await sleep(200);
+    try { logText = fs.readFileSync(LOG, 'utf8'); } catch (e) { /* 日志还没刷新 */ }
+  }
+  if (bridgeSeen) ok('令牌桥把令牌交给页面', '日志只有长度');
+  else bad('令牌桥把令牌交给页面', '等了 10 秒仍没有 selftest bridge 行');
 
   // ---- 3. 日志里不能有令牌明文
   const leak = /token=[A-Za-z0-9_-]{20,}/.test(logText);
@@ -95,8 +103,13 @@ function uiServerPids() {
   const mine = uiServerPids().filter((p) => !before.has(p));
   if (!mine.length) bad('强杀清理', '没找到本次起的 ui-server（可能提前退出了）');
   ps("Stop-Process -Id " + pids[0] + " -Force -ErrorAction SilentlyContinue");
-  await sleep(6000);
-  const left = uiServerPids().filter((p) => mine.indexOf(p) >= 0);
+  // 进程退出是异步的：taskkill 之后立刻查会看到"正在退出"的 pid，轮询到它消失为止（最多 10 秒）
+  let left = [];
+  for (let i = 0; i < 50; i++) {
+    left = uiServerPids().filter((p) => mine.indexOf(p) >= 0);
+    if (!left.length) break;
+    await sleep(200);
+  }
   if (!left.length) ok('强杀启动器后 ui-server 自清', '原 pid ' + mine.join(','));
   else {
     bad('强杀启动器后 ui-server 自清', '残留 pid ' + left.join(','));

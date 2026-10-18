@@ -754,6 +754,7 @@ namespace DshToGo
                 ApplySettings(_web.CoreWebView2.Settings);
                 _web.CoreWebView2.WebMessageReceived += Web_MessageReceived;
                 _web.CoreWebView2.NavigationStarting += Web_NavigationStarting;
+                _web.CoreWebView2.NewWindowRequested += Web_NewWindowRequested;
                 _web.CoreWebView2.NavigationCompleted += Web_NavigationCompleted;
 
                 // ui-server.js currently rejects even "/" without a token.  The
@@ -807,20 +808,39 @@ namespace DshToGo
             s.AreHostObjectsAllowed = false;
         }
 
+        /// <summary>
+        /// 只放行我们自己的 origin：scheme=http、host=127.0.0.1、port=本次端口、
+        /// 且不带 userinfo（否则 http://127.0.0.1:3181@evil.com 这种会被当成合法前缀）。
+        /// about:blank 单独放行（NavigateToString 用）；data: 一律拒。
+        /// </summary>
+        private bool IsAllowedUri(string uri)
+        {
+            if (string.IsNullOrEmpty(uri)) return false;
+            if (string.Equals(uri, "about:blank", StringComparison.OrdinalIgnoreCase)) return true;
+            Uri u;
+            if (!Uri.TryCreate(uri, UriKind.Absolute, out u)) return false;
+            if (!string.Equals(u.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)) return false;
+            if (!string.Equals(u.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase)) return false;
+            if (u.Port != _port) return false;
+            if (!string.IsNullOrEmpty(u.UserInfo)) return false;
+            return true;
+        }
+
         private void Web_NavigationStarting(object sender, CoreWebView2NavigationStartingEventArgs e)
         {
             string uri = e.Uri == null ? string.Empty : e.Uri;
-            if (uri.StartsWith("about:", StringComparison.OrdinalIgnoreCase)
-                || uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-            {
-                return; // NavigateToString() uses about:blank
-            }
-            string allowed = "http://127.0.0.1:" + _port.ToString(CultureInfo.InvariantCulture);
-            if (!uri.StartsWith(allowed, StringComparison.OrdinalIgnoreCase))
+            if (!IsAllowedUri(uri))
             {
                 e.Cancel = true;
                 Host.Log("navigation blocked: " + uri);
             }
+        }
+
+        private void Web_NewWindowRequested(object sender, CoreWebView2NewWindowRequestedEventArgs e)
+        {
+            // 页面不会开新窗口；真被触发就拦掉，避免绕过上面的导航白名单
+            e.Handled = true;
+            Host.Log("new window blocked: " + (e.Uri == null ? string.Empty : e.Uri));
         }
 
         private async void Web_NavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs e)
@@ -876,73 +896,115 @@ namespace DshToGo
             catch (Exception) { }
         }
 
+        /// <summary>
+        /// 只接受本机 origin 发来的消息（e.Source 严格比对），并按 JSON 的 type 字段分发。
+        /// 不做子串匹配：被加载进来的任何文档都无法靠拼字符串触发 PostToken()。
+        /// </summary>
         private void Web_MessageReceived(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
+            if (!IsAllowedUri(e.Source))
+            {
+                Host.Log("message blocked: source=" + (e.Source == null ? "(null)" : e.Source));
+                return;
+            }
+
             string json;
             try { json = e.WebMessageAsJson; }
             catch (Exception) { return; }
             if (string.IsNullOrEmpty(json)) return;
 
-            if (json.IndexOf("\"dsh.token.request\"", StringComparison.Ordinal) >= 0)
+            string type = ReadJsonString(json, "type");
+            if (type == null) { Host.Log("message ignored: no type"); return; }
+
+            switch (type)
             {
-                PostToken();
-                return;
-            }
-            if (json.IndexOf("\"dsh.activate\"", StringComparison.Ordinal) >= 0)
-            {
-                BringToFrontNow();
-                return;
-            }
-            if (json.IndexOf("\"dsh.win.drag\"", StringComparison.Ordinal) >= 0)
-            {
-                // 交给系统的非客户区拖动：双击最大化、贴边分屏、拖到顶部弹出 Snap 布局都会自动生效
-                ReleaseCapture();
-                SendMessage(Handle, 0x00A1 /*WM_NCLBUTTONDOWN*/, (IntPtr)HTCAPTION, IntPtr.Zero);
-                return;
-            }
-            if (json.IndexOf("\"dsh.win.hit\"", StringComparison.Ordinal) >= 0)
-            {
-                int at = json.IndexOf("\"captionRight\"", StringComparison.Ordinal);
-                if (at >= 0)
-                {
-                    int colon = json.IndexOf(':', at);
-                    if (colon > 0)
+                case "dsh.token.request":
+                    PostToken();
+                    return;
+                case "dsh.activate":
+                    BringToFrontNow();
+                    return;
+                case "dsh.win.drag":
+                    // 交给系统的非客户区拖动：双击最大化、贴边分屏、拖到顶部 Snap 都会自动生效
+                    ReleaseCapture();
+                    SendMessage(Handle, 0x00A1 /*WM_NCLBUTTONDOWN*/, (IntPtr)HTCAPTION, IntPtr.Zero);
+                    return;
+                case "dsh.win.hit":
                     {
-                        int i = colon + 1;
-                        while (i < json.Length && (json[i] == ' ' || json[i] == '	')) i++;
-                        int start = i;
-                        while (i < json.Length && json[i] >= '0' && json[i] <= '9') i++;
-                        int v;
-                        if (i > start && int.TryParse(json.Substring(start, i - start), out v) && v > 0)
-                        {
-                            _captionRight = v;
-                        }
+                        int v = ReadJsonInt(json, "captionRight");
+                        if (v > 0) _captionRight = v;
+                        return;
                     }
+                case "dsh.win.min":
+                    WindowState = FormWindowState.Minimized;
+                    return;
+                case "dsh.win.max":
+                    WindowState = WindowState == FormWindowState.Maximized
+                        ? FormWindowState.Normal : FormWindowState.Maximized;
+                    PostWindowState();
+                    return;
+                case "dsh.win.close":
+                    BeginCloseFlow();
+                    return;
+                case "dsh.theme":
+                    // 只认 light/dark 两个取值；标题文本永远是固定值，不受页面影响
+                    ApplyTheme(string.Equals(ReadJsonString(json, "theme"), "light", StringComparison.OrdinalIgnoreCase));
+                    return;
+                default:
+                    Host.Log("message ignored: type=" + type);
+                    return;
+            }
+        }
+
+        /// <summary>从 JSON 里取一个字符串字段（够用的极简解析：不依赖外部库）。</summary>
+        private static string ReadJsonString(string json, string key)
+        {
+            int at = json.IndexOf("\"" + key + "\"", StringComparison.Ordinal);
+            if (at < 0) return null;
+            int colon = json.IndexOf(':', at + key.Length + 2);
+            if (colon < 0) return null;
+            int i = colon + 1;
+            while (i < json.Length && char.IsWhiteSpace(json[i])) i++;
+            if (i >= json.Length || json[i] != '"') return null;
+            i++;
+            StringBuilder sb = new StringBuilder();
+            while (i < json.Length)
+            {
+                char c = json[i];
+                if (c == '"') return sb.ToString();
+                if (c == '\\' && i + 1 < json.Length)
+                {
+                    char n = json[i + 1];
+                    if (n == 'u' && i + 5 < json.Length)
+                    {
+                        int code;
+                        if (int.TryParse(json.Substring(i + 2, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out code)) sb.Append((char)code);
+                        i += 6;
+                        continue;
+                    }
+                    sb.Append(n == 'n' ? '\n' : n == 't' ? '\t' : n == 'r' ? '\r' : n);
+                    i += 2;
+                    continue;
                 }
-                return;
+                sb.Append(c);
+                i++;
             }
-            if (json.IndexOf("\"dsh.win.min\"", StringComparison.Ordinal) >= 0)
-            {
-                WindowState = FormWindowState.Minimized;
-                return;
-            }
-            if (json.IndexOf("\"dsh.win.max\"", StringComparison.Ordinal) >= 0)
-            {
-                WindowState = WindowState == FormWindowState.Maximized
-                    ? FormWindowState.Normal : FormWindowState.Maximized;
-                PostWindowState();
-                return;
-            }
-            if (json.IndexOf("\"dsh.win.close\"", StringComparison.Ordinal) >= 0)
-            {
-                BeginCloseFlow();
-                return;
-            }
-            if (json.IndexOf("\"dsh.theme\"", StringComparison.Ordinal) >= 0)
-            {
-                // 只认 light 这一种取值；标题文本永远是固定值，不受页面影响
-                ApplyTheme(json.IndexOf("\"light\"", StringComparison.Ordinal) >= 0);
-            }
+            return sb.ToString();
+        }
+
+        /// <summary>从 JSON 里取一个非负整数字段。</summary>
+        private static int ReadJsonInt(string json, string key)
+        {
+            int at = json.IndexOf("\"" + key + "\"", StringComparison.Ordinal);
+            if (at < 0) return 0;
+            int colon = json.IndexOf(':', at + key.Length + 2);
+            if (colon < 0) return 0;
+            int i = colon + 1;
+            while (i < json.Length && (json[i] == ' ' || json[i] == '	')) i++;
+            int start = i;
+            while (i < json.Length && json[i] >= '0' && json[i] <= '9') i++;
+            int v;
+            return (i > start && int.TryParse(json.Substring(start, i - start), out v)) ? v : 0;
         }
 
         private void ApplyTheme(bool light)
@@ -1027,6 +1089,8 @@ namespace DshToGo
         }
 
         private bool _closeConfirmed;
+        // 用户在关窗对话框里选了「让 dsh 继续在后台运行」：清理时只杀 ui-server（不带 /T）
+        private bool _keepDshOnClose;
         private bool _closeFlowRunning;
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -1056,8 +1120,12 @@ namespace DshToGo
                     if (!_node.HasExited)
                     {
                         int pid = _node.Id;
-                        ProcessStartInfo psi = new ProcessStartInfo("taskkill",
-                            "/F /T /PID " + pid.ToString(CultureInfo.InvariantCulture));
+                        // keep 时不能用 /T：dsh 是 ui-server 的子孙进程（ui-server → launch.js → dsh），
+                        // /T 会把它一起杀掉，那个「让 dsh 继续在后台运行」就成了空话。
+                        string killArgs = _keepDshOnClose
+                            ? "/F /PID " + pid.ToString(CultureInfo.InvariantCulture)
+                            : "/F /T /PID " + pid.ToString(CultureInfo.InvariantCulture);
+                        ProcessStartInfo psi = new ProcessStartInfo("taskkill", killArgs);
                         psi.UseShellExecute = false;
                         psi.CreateNoWindow = true;
                         psi.WindowStyle = ProcessWindowStyle.Hidden;
@@ -1065,7 +1133,7 @@ namespace DshToGo
                         {
                             if (kill != null) kill.WaitForExit(5000);
                         }
-                        Host.Log("ui-server stopped (own pid " + pid + ")");
+                        Host.Log("ui-server stopped (own pid " + pid + ( _keepDshOnClose ? ", dsh kept alive" : "" ) + ")");
                     }
                 }
                 catch (Exception ex)
@@ -1104,7 +1172,11 @@ namespace DshToGo
                         }
                         else Host.Log("close: dsh 已停止");
                     }
-                    else Host.Log("close: 用户选择让 dsh 继续在后台运行");
+                    else
+                    {
+                        _keepDshOnClose = true;
+                        Host.Log("close: 用户选择让 dsh 继续在后台运行");
+                    }
                 }
             }
             catch (Exception ex)

@@ -100,7 +100,8 @@ function buildEnv(extra) {
   env.npm_config_audit = 'false';
   env.npm_config_fund = 'false';
   // npm 只读盘内配置（宿主 ~/.npmrc 不参与），换机行为一致
-  env.npm_config_userconfig = require('./npmrc.js').ensure();
+  const rcPath = require('./npmrc.js').ensure();
+  if (rcPath) env.npm_config_userconfig = rcPath;
   const tmp = tempRoot(env);
   env.TEMP = tmp;
   env.TMP = tmp;

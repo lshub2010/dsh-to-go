@@ -27,6 +27,28 @@ const FLUENT_DIR = path.join(ROOT, 'third_party', 'fluent');
 const read = (p, dflt) => { try { return fs.readFileSync(p, 'utf8'); } catch (e) { if (dflt !== undefined) return dflt; throw new Error('缺少文件：' + path.relative(ROOT, p)); } };
 const SECTIONS = ['overview', 'sites', 'upgrade', 'diag', 'plugins', 'launcher'];
 
+/**
+ * 内联转义：内联内容里一旦出现 </script> / </style>，HTML 解析器会就地截断文档结构
+ * （后面全变成纯文本）。把闭合标签的斜杠转义掉——在 JS 字符串/正则与 CSS 字符串里
+ * `<\/` 与 `</` 等价，语义不变。`<!--` 在 <script> 内同样特殊，但没有安全等价写法，
+ * 直接判为构建错误，让人改源码，而不是静默产出坏页面。
+ */
+function inlineSafe(text, kind) {
+  if (kind !== 'js') {
+    if (text.indexOf('<!--') >= 0) throw new Error('内联的 CSS 里出现 "<!--"，请改源码');
+    return text.replace(/<\/(style)/gi, '<\\/$1');
+  }
+  // JS：</script 与 <!-- 都按字符串/regex 里的等价转义处理（<\/ 、 <\! 在 JS 里都还原成同一个字符），
+  // 转完再做一次语法解析，确保没有把代码改坏。
+  const escaped = text.replace(/<\/(script)/gi, '<\\/$1').replace(/<!--/g, '<\\!--');
+  try {
+    new (require('vm').Script)(escaped);   // 只解析不执行
+  } catch (e) {
+    throw new Error('内联 JS 转义后无法解析（' + e.message + '），请检查内联内容');
+  }
+  return escaped;
+}
+
 function build() {
   const head = read(path.join(SRC, 'head.html'));
   const css = [
@@ -41,7 +63,8 @@ function build() {
   ].join('\n');
 
   if (!head.includes('<!--{{CSS}}-->')) throw new Error('src/head.html 缺少 CSS 占位 <!--{{CSS}}-->');
-  const html = [head.replace('<!--{{CSS}}-->', '<style>\n' + css + '\n</style>'), '', '<body>',
+  const headHtml = head.replace('<!--{{CSS}}-->', () => '<style>\n' + inlineSafe(css, 'css') + '\n</style>');
+  const html = [headHtml, '', '<body>',
     read(path.join(SRC, 'partials', 'header.html')).trimEnd(), '',
     '<main>',
     ...SECTIONS.map((s) => read(path.join(SRC, 'partials', s + '.html')).trimEnd()),
@@ -50,26 +73,45 @@ function build() {
 
   // Fluent 组件库：有就内联（浏览器端 IIFE），没有就跳过（页面仍能跑，只是控件是原生的）
   const fluentJs = read(path.join(FLUENT_DIR, 'fluent.min.js'), '');
-  if (fluentJs) html.push('<script>/*{{FLUENT_BUNDLE_BEGIN}}*/' + fluentJs + '/*{{FLUENT_BUNDLE_END}}*/</script>');
-  html.push('<script>', read(path.join(SRC, 'app.js')), '</script>', '</body>', '</html>', '');
+  if (fluentJs) html.push('<script>/*{{FLUENT_BUNDLE_BEGIN}}*/' + inlineSafe(fluentJs, 'js') + '/*{{FLUENT_BUNDLE_END}}*/</script>');
+  html.push('<script>', inlineSafe(read(path.join(SRC, 'app.js')), 'js'), '</script>', '</body>', '</html>', '');
 
   const out = '<!-- 生成物：由 tools/ui-build.js 从 src/ 合成，请改 src/ 不要改这里 -->\n' + html.join('\n');
   return out;
 }
 
-const out = build();
+let out;
+try {
+  out = build();
+} catch (e) {
+  console.error('构建失败：' + e.message);
+  process.exit(1);
+}
 
-// 自检：单文件 + 零外链
+// 产物自检：单文件 + 零外链 + 结构完整（必须以 </html> 结尾）
 const bad = [];
 const ext = /(?:src|href)\s*=\s*["'](https?:|\/\/)/gi;
 let m;
 while ((m = ext.exec(out))) bad.push(m[0]);
 if (/<link[^>]+href=["'](?!data:)/i.test(out)) bad.push('<link> 外链');
 if (/<script[^>]+src=/i.test(out)) bad.push('<script src=> 外链');
+if (!out.trimEnd().endsWith('</html>')) bad.push('产物没有以 </html> 结尾（内联内容可能被截断）');
+if (bad.length) {
+  console.error('产物不合格（未写盘）：' + bad.join(', '));   // 先判后写
+  process.exit(1);
+}
 
 if (process.argv.includes('--check')) {
-  if (bad.length) { console.error('外部资源检查失败：' + bad.join(', ')); process.exit(1); }
-  console.log('单文件/零外链检查通过；体积 ' + out.length + ' 字节');
+  if (!fs.existsSync(OUT)) { console.error('--check 失败：ui/app.html 不存在，请先跑一次 tools/ui-build.js'); process.exit(1); }
+  const disk = fs.readFileSync(OUT, 'utf8');
+  if (disk !== out) {
+    const a = crypto.createHash('sha256').update(disk).digest('hex').slice(0, 12);
+    const b = crypto.createHash('sha256').update(out).digest('hex').slice(0, 12);
+    console.error('--check 失败：ui/app.html 与 src/ 不一致（磁盘 ' + a + ' ≠ 期望 ' + b + '，' + disk.length + ' vs ' + out.length + ' 字节）');
+    console.error('  改过 src/ 就重新跑一次：node tools/ui-build.js');
+    process.exit(1);
+  }
+  console.log('--check 通过：零外链，产物与 src/ 一致（' + out.length + ' 字节）');
   process.exit(0);
 }
 
@@ -78,7 +120,3 @@ fs.writeFileSync(OUT, out, 'utf8');
 const sha = crypto.createHash('sha256').update(out).digest('hex').slice(0, 16);
 console.log('已生成 ui/app.html：' + out.length + ' 字节，sha256:' + sha);
 console.log('  分区：' + SECTIONS.join(' / ') + '；Fluent bundle：' + (fs.existsSync(path.join(FLUENT_DIR, 'fluent.min.js')) ? '内联' : '未提供（跳过）'));
-if (bad.length) {
-  console.error('警告：产物里出现外部资源引用 → ' + bad.join(', '));
-  process.exit(1);
-}
