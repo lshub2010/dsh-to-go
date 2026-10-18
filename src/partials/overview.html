@@ -5,7 +5,7 @@
     /* 标签页用 section[hidden] 切换：ID 优先级会压过 section[hidden]{display:none}，必须显式补回 */
     #tab-overview[hidden]{display:none}
     /* 宽窗口排两列：卡片不再被拉成"左边一堆字、右边一片空" */
-    @media (min-width:1500px){
+    @media (min-width:1200px){
       #tab-overview{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
       #tab-overview > .card{margin-bottom:0;min-width:0}
       /* 尾部两张（密钥与站点、最近任务）整行铺开；注意 <style> 也算子元素，所以用 nth-last-child */

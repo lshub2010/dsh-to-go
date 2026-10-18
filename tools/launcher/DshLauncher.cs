@@ -779,6 +779,8 @@ namespace DshToGo
             s.AreDevToolsEnabled = false;
             s.AreDefaultContextMenusEnabled = false;
             s.AreBrowserAcceleratorKeysEnabled = false;
+            // 自带缩放在 Ctrl+滚轮时会把顶栏和菜单栏一起放大；缩放改由页面只作用于内容区
+            s.IsZoomControlEnabled = false;
             s.IsPasswordAutosaveEnabled = false;
             s.IsGeneralAutofillEnabled = false;
             s.AreDefaultScriptDialogsEnabled = false;

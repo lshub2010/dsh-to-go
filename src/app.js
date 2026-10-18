@@ -792,16 +792,25 @@ function pickedVersion() {
 /* ---------------------------------------------------------------- 内容缩放
    窗口变宽时把内容区整体放大（字/卡片/按钮一起），顶栏和菜单栏保持原尺寸。
    基准 1180：1280 的窗口约 1.08，1600 约 1.36，1920 约 1.55（上限）。 */
+let _manualZoom = 1;          // Ctrl+滚轮的手动倍率（只作用于内容区）
 function applyContentZoom() {
   const m = document.querySelector('main');
   if (!m) return;
   const w = document.documentElement.clientWidth || window.innerWidth;
-  let z = w / 1180;
-  if (z < 0.85) z = 0.85;
-  if (z > 1.55) z = 1.55;
+  let z = (w / 1180) * _manualZoom;
+  // 上限压到 1.2：窗口再宽也不把卡片和字号无限放大，只多留白/多列
+  if (z < 0.8) z = 0.8;
+  if (z > 1.2) z = 1.2;
   m.style.zoom = z.toFixed(3);
 }
 applyContentZoom();
+// Ctrl+滚轮：只缩放内容区，菜单栏和顶栏保持原尺寸（宿主那边已关掉 WebView2 自带缩放）
+window.addEventListener('wheel', (ev) => {
+  if (!ev.ctrlKey) return;
+  ev.preventDefault();
+  _manualZoom = Math.min(1.6, Math.max(0.7, _manualZoom + (ev.deltaY > 0 ? -0.05 : 0.05)));
+  applyContentZoom();
+}, { passive: false });
 let _zoomTimer = 0;
 window.addEventListener('resize', () => {
   clearTimeout(_zoomTimer);
@@ -889,6 +898,13 @@ function initTitlebar() {
     if (ev.target.closest('button, a, input, select, .pb')) return;
     post({ type: 'dsh.win.drag' });
   });
+  const navBar = document.querySelector('nav');
+  if (navBar) {
+    navBar.addEventListener('dblclick', (ev) => {
+      if (ev.target.closest('button')) return;
+      post({ type: 'dsh.win.max' });
+    });
+  }
   bar.addEventListener('dblclick', (ev) => {
     if (ev.target.closest('button, a, input, select, .pb')) return;
     post({ type: 'dsh.win.max' });
