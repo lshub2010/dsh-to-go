@@ -121,6 +121,12 @@ dsh-to-go\
 - **不泄露密钥**：口令只在页面里输入、只存在服务进程内存；启动器不保存任何凭据（没有「记住口令」）；
   页面只显示密钥长度占位；WebView2 的开发者工具、右键菜单、浏览器快捷键、密码保存、自动填充全部关闭；
   窗口只能停留在 `127.0.0.1`，外链导航会被拦下。验收脚本是 `tests/redline-audit.js`。
+- **不碰宿主机**：运行期只往盘内写（`data\`、`runtime\`、`backups\`）；不写注册表、不写环境变量、
+  不装服务与计划任务。唯一例外是 dsh 子进程的临时目录（默认宿主 `%LOCALAPPDATA%\Temp`，
+  因为 ACL 沙箱要 `WRITE_OWNER`），可用 `runtime\usb-temp.txt` 切回盘内。
+  细节见 [`docs/PORTABILITY.md`](docs/PORTABILITY.md)，守卫脚本是 `tests/portability-audit.js`。
+- **第三方许可证**：随盘分发的 Node.js、WebView2 SDK、Fluent UI/FAST、dsh 图标各自许可与声明
+  集中在 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)（对应的 LICENSE 文本也放在组件目录里）。
 - **缺东西时**：没有 `runtime\node` → 窗口里显示「请先跑 build.cmd」；缺 WebView2 / .NET Framework
   → 自动改走 `dsh-ui.cmd` 用浏览器打开，不会打不开。
 

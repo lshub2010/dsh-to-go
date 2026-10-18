@@ -164,6 +164,7 @@ function dumpConfig() {
       DSH_HOME: DATA,
       DSH_AGENTS_HOME: path.join(DATA, 'agents'),
       npm_config_cache: path.join(ROOT, 'runtime', 'npm-cache'),
+      npm_config_userconfig: require('./npmrc.js').ensure(),
     }),
     maxBuffer: 64 * 1024 * 1024,
   });

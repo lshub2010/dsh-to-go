@@ -107,7 +107,7 @@ function npmInstall(name, registries) {
       '--cache=' + CACHE,
       '--registry=' + reg.url,
       '--fetch-timeout=60000', '--fetch-retries=1', '--fetch-retry-mintimeout=2000',
-      '--no-audit', '--no-fund', '--loglevel=error'], { cwd: slotDir(name), timeout: tmo });
+      '--no-audit', '--no-fund', '--loglevel=error'], { cwd: slotDir(name), timeout: tmo, env: require('./npmrc.js').env() });
     if (r.status === 0) {
       const secs = Math.round((Date.now() - t0) / 1000);
       say('完成：' + name + ' ← dsh ' + installedVersion(name) + '（' + secs + ' 秒）');

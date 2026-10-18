@@ -282,7 +282,7 @@ async function upgrade(target, assumeYes) {
       '--cache=' + path.join(RUNTIME, 'npm-cache'),
       '--registry=' + reg.url,
       '--fetch-timeout=60000', '--fetch-retries=1', '--fetch-retry-mintimeout=2000',
-      '--no-audit', '--no-fund', '--loglevel=error'], { cwd: slot(idle), timeout: tmo });
+      '--no-audit', '--no-fund', '--loglevel=error'], { cwd: slot(idle), timeout: tmo, env: require('./npmrc.js').env() });
     if (r.status === 0) { usedRegistry = reg; break; }
     lastErr = String(r.stderr || r.stdout || '').trim().split('\n').slice(-4).join(' | ')
       || (r.error && r.error.code === 'ETIMEDOUT' ? '超时（10 分钟没有结果）' : '未知错误');
