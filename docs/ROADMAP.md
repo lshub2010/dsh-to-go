@@ -356,6 +356,14 @@ dsh 当场报 `ValidationError: $.providers.<站点>.models[0].contextWindow exp
 
 ## 6. 风险与回退
 
+- **升级空等**：npm 官方源在部分网络下「连得上但不回包」，以前 `spawnSync` 要等 30 分钟才换镜像。
+  现在装之前先用 4 秒探一次可达性，不通的源直接跳过（仍会试一次，但只等 2 分钟）；源可在升级页里选
+  （自动 / 官方 / 镜像 / 自定义），偏好存 `data\npm-source.json`。
+- **升级前的备份**：打包 `data/` 时**排除 `.webview`**（WebView2 的用户数据；运行中的浏览器会锁住
+  `lockfile`，Compress-Archive 会直接失败）。备份失败不再阻断升级，只提示「这次没有降级备份」。
+- **切槽的前置条件**：目标槽没装 dsh、或 dsh 正在运行，都属于「先满足条件」，接口返回 **409** 并给出原话；
+  服务器真的出错才是 500。
+
 - **启动器起不来**：`dsh-ui.cmd` 是永远可用的回退路径（启动器在缺 .NET/WebView2 时会自动改走它）；
   启动器自己的日志在 `data\logs\launcher.log`（只记令牌长度，不记令牌）。
 - **启动器被强杀**：壳把 pid 交给 ui-server（`DSH_LAUNCHER_PID`），壳一死 ui-server 3 秒内自退，不留孤儿服务；
