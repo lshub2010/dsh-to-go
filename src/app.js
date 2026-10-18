@@ -792,6 +792,36 @@ el('btn-upgrade').addEventListener('click', (e) => {
   if (!v) { flash('up-out', '请先从列表里选一个版本（或用「手动填版本」）。', 'err'); return; }
   runJob('/api/jobs/upgrade', { version: v }, e.currentTarget, '升级中…');
 });
+
+/* ---------------------------------------------------------------- 下载源
+   官方源在部分网络下是「连得上但一直不回包」，以前会空等半小时才换镜像。
+   这里让用户选源并存盘（data\npm-source.json），安装前还会先探一次可达性。 */
+async function loadNpmSource() {
+  try {
+    const r = await api('/api/npm-source');
+    el('npm-src-mode').value = r.mode || 'auto';
+    el('npm-src-url').value = r.url || '';
+    el('npm-src-url').disabled = (r.mode !== 'custom');
+  } catch (e) { /* 老版本服务没有这个接口时不影响其它功能 */ }
+}
+el('npm-src-mode').addEventListener('change', () => {
+  el('npm-src-url').disabled = el('npm-src-mode').value !== 'custom';
+  if (!el('npm-src-url').disabled) el('npm-src-url').focus();
+});
+el('btn-npm-src-save').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  const mode = el('npm-src-mode').value;
+  const url = String(el('npm-src-url').value || '').trim();
+  btn.disabled = true;
+  try {
+    await api('/api/npm-source', { mode, url });
+    flash('npm-src-out', mode === 'custom' ? ('已保存：' + url) : '已保存：下次安装 / 升级生效', 'ok');
+  } catch (err) {
+    flash('npm-src-out', '保存失败：' + err.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+});
 el('btn-install-slot').addEventListener('click', (e) => {
   const version = String(el('i-ver').value || el('u-ver-raw').value || '').trim();
   if (!version) { flash('install-out', '请先从列表里选一个版本。', 'err'); return; }
@@ -1310,6 +1340,7 @@ el('btn-plug-allow').addEventListener('click', (e) => {
   }
   await loadSites().catch(() => {});
   loadVersions();      // 版本列表（失败也不影响其它功能，页面会提示改用手动填）
+  loadNpmSource();     // 下载源偏好（老服务没有这个接口时静默跳过）
   startPolling();
 })().catch((err) => {
   // 启动阶段出错不能静默：把错误显示在最上面，否则用户只看到「正在读取状态…」卡住

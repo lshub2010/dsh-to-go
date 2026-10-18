@@ -538,9 +538,39 @@ async function handleApi(req, res, url) {
       return send(200, { ok: true, state: state() });
     }
 
+    if (p === '/api/npm-source' && req.method === 'GET') {
+      const npmsrc = require('./npmsrc.js');
+      return send(200, Object.assign({}, npmsrc.read(), { modes: npmsrc.MODES, known: npmsrc.KNOWN }));
+    }
+    if (p === '/api/npm-source' && req.method === 'POST') {
+      const npmsrc = require('./npmsrc.js');
+      try {
+        return send(200, { ok: true, source: npmsrc.write({ mode: body.mode, url: body.url }) });
+      } catch (e) {
+        return send(400, { error: String(e && e.message || e) });
+      }
+    }
+
     if (p === '/api/slot/switch' && req.method === 'POST') {
+      // dsh 在跑的时候切指针等于「运行中的进程与磁盘上的版本不一致」，先让它停。
+      const st = dshStatus();
+      if (st.running) {
+        return send(409, {
+          error: 'dsh 正在运行，先把 dsh 停掉再切槽（否则跑的还是旧槽的代码）',
+          state: state(),
+        });
+      }
       const r = runConfig(['switch']);
-      return send(r.status === 0 ? 200 : 500, { ok: r.status === 0, text: r.text, state: state() });
+      if (r.status === 0) return send(200, { ok: true, text: r.text, state: state() });
+      // 「目标槽还没装 dsh」是前置条件不满足，不是服务器挂了：409 + 工具的原话
+      const precondition = /还没有 dsh|not-installed|请先升级/i.test(String(r.text || ''));
+      const lastLine = String(r.text || '').trim().split(/\r?\n/).filter(Boolean).pop() || '切换失败';
+      return send(precondition ? 409 : 500, {
+        ok: false,
+        error: lastLine,
+        text: r.text,
+        state: state(),
+      });
     }
 
     if (p === '/api/portable-temp' && req.method === 'POST') {
