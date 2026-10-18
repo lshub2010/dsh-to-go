@@ -13,3 +13,4 @@
 # 图标是二进制，别让 git 碰它的换行
 *.ico binary
 *.png binary
+ui/app.html text eol=lf

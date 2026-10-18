@@ -24,7 +24,12 @@ const SRC = path.join(ROOT, 'src');
 const OUT = path.join(ROOT, 'ui', 'app.html');
 const FLUENT_DIR = path.join(ROOT, 'third_party', 'fluent');
 
-const read = (p, dflt) => { try { return fs.readFileSync(p, 'utf8'); } catch (e) { if (dflt !== undefined) return dflt; throw new Error('缺少文件：' + path.relative(ROOT, p)); } };
+// 统一换行：源码在 Windows 上常是 CRLF，而 git 入库时会被规范成 LF；
+// 如果产物跟着工作区的换行走，--check 在 CI（checkout 出来是 LF）就会假红。
+const read = (p, dflt) => {
+  try { return fs.readFileSync(p, 'utf8').replace(/\r\n?/g, '\n'); }
+  catch (e) { if (dflt !== undefined) return dflt; throw new Error('缺少文件：' + path.relative(ROOT, p)); }
+};
 const SECTIONS = ['overview', 'sites', 'upgrade', 'diag', 'plugins', 'launcher'];
 
 /**
