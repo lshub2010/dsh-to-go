@@ -26,8 +26,8 @@ const SLOT_FILE = path.join(RUNTIME, 'current.txt');
 const PORT_FILE = path.join(RUNTIME, 'port.txt');
 const VERSION_FILE = path.join(ROOT, 'VERSION.txt');
 
-const DEFAULT_A = '0.2.1-alpha.2';
-const DEFAULT_B = '0.2.0-rc.2';
+const DEFAULT_A = 'latest';
+const DEFAULT_B = 'latest';
 const DEFAULT_PORT = 3180;
 const NPM_MIRRORS = [
   { url: 'https://registry.npmjs.org', label: 'npmjs 官方源' },
@@ -146,6 +146,11 @@ function main() {
   const plan = opt.slot
     ? [[opt.slot, opt.version || opt.a]]
     : (opt.single ? [['agent-A', opt.a]] : [['agent-A', opt.a], ['agent-B', opt.b]]);
+  // 两个槽都装 latest 时，升级前没有可回滚的旧版本：把这件事说清楚，
+  // 别让人以为 A/B 双槽一装好就已经在保护他了。
+  if (!opt.slot && !opt.single && opt.a === opt.b) {
+    say('两个槽都装 ' + opt.a + '：升级前没有可回滚的旧版本。要回滚目标请用 --b 指定一个更旧的版本。');
+  }
   for (const [name, spec] of plan) {
     console.log('');
     say('槽 ' + name + ' ← 目标版本 ' + spec);

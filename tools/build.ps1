@@ -7,10 +7,11 @@
 #
 # 参数（cmd 里用 -Name value 形式）：
 #   -NodeVersion <vX.Y.Z>   便携 Node 版本（默认 v26.7.0）
-#   -VersionA <版本|标签>    活动槽 dsh（默认 0.2.1-alpha.2）
-#   -VersionB <版本|标签>    备用槽 dsh（默认 0.2.0-rc.2）
+#   -VersionA <版本|标签>    活动槽 dsh（默认 latest）
+#   -VersionB <版本|标签>    备用槽 dsh（默认 latest；要回滚目标请显式给旧版本）
 #   -Single                  只装一个槽
-#   -Port <端口>             网页端口（默认 3180）
+#   -Port <端口>             dsh 网页端口（默认 3180；仅 -Cli 安装时使用）
+#   -UiPort <端口>           配置页端口（默认 3181；默认走向导时使用）
 #   -Registry <url>          只用一个 npm 源
 #   -Target <目录>           构建到别的目录（默认本仓库）
 #   -SkipChecksum            跳过 Node 校验和（不建议）
@@ -21,10 +22,11 @@
 
 param(
   [string]$NodeVersion = 'v26.7.0',
-  [string]$VersionA = '0.2.1-alpha.2',
-  [string]$VersionB = '0.2.0-rc.2',
+  [string]$VersionA = 'latest',
+  [string]$VersionB = 'latest',
   [switch]$Single,
   [int]$Port = 3180,
+  [int]$UiPort = 3181,
   [string]$Registry = '',
   [string]$Target = '',
   [switch]$SkipChecksum,
@@ -86,7 +88,8 @@ if (Test-Path $NodeExe) {
     foreach ($b in $bases) {
       try {
         $sums = (New-Object Net.WebClient).DownloadString("$b/SHASUMS256.txt")
-        $line = ($sums -split "`n" | Where-Object { $_ -match [regex]::Escape($zipName) + '$' } | Select-Object -First 1)
+        # 先 Trim：镜像站可能给 CRLF，行尾的 \r 会让 "zip$" 匹配不到，校验就会被静默跳过
+        $line = ($sums -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match [regex]::Escape($zipName) + '$' } | Select-Object -First 1)
         if ($line) {
           $want = ($line -split '\s+')[0].ToUpper()
           $got = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToUpper()
@@ -124,7 +127,14 @@ if ($Cli) {
   if ($Single) { $argv += '--single' } else { $argv += @('--b', $VersionB) }
   if ($Registry) { $argv += @('--registry', $Registry) }
 
-  Say '开始安装 dsh…'
+  if ($Single) {
+    Say ("开始安装 dsh：活动槽 $VersionA（单槽）")
+  } else {
+    Say ("开始安装 dsh：活动槽 $VersionA，备用槽 $VersionB")
+    if ($VersionA -eq $VersionB) {
+      Say '两个槽装的是同一个版本：升级前没有可回滚的旧版本。要回滚目标请用 -VersionB 指定一个更旧的版本。'
+    }
+  }
   & $NodeExe @argv
   $rc = $LASTEXITCODE
   if ($rc -ne 0) { Fail "install.js 返回 $rc，构建未完成。" }
@@ -140,14 +150,45 @@ $ui = Join-Path $Target 'tools\ui-server.js'
 if (-not (Test-Path $ui)) { Fail "找不到图形服务：$ui" }
 
 Say '便携 Node 已就绪，下面打开图形向导（版本安装也在页面里完成）。'
-$args2 = @("`"$ui`"")
+# 配置页端口（-UiPort，默认 3181）与 dsh 自己的网页端口（-Port，默认 3180）是两回事：
+# 配置页还开着时 dsh 要起 3180，两者不能用同一个端口，否则会 EADDRINUSE。
+$args2 = @("`"$ui`"", '--port', "$UiPort")
 if ($NoOpen) { $args2 += '--no-open' }
-if ($Port -ne 3180) { $args2 += @('--port', "$Port") }
-Start-Process -FilePath $NodeExe -ArgumentList $args2 -WorkingDirectory $Target
-Start-Sleep -Seconds 3
+$proc = Start-Process -FilePath $NodeExe -ArgumentList $args2 -WorkingDirectory $Target -PassThru
+
+# 启动是异步的：不能睡 3 秒就宣布「已启动」。轮询到有响应为止（最多 10 秒），
+# 无令牌访问根路径返回 403 也算起来了（令牌检查在页面之前）。
+$ready = $false
+for ($i = 0; $i -lt 20; $i++) {
+  Start-Sleep -Milliseconds 500
+  if ($proc.HasExited) { break }
+  # 用 TCP 连接判断「在监听」：无令牌访问根路径会返回 403，
+  # 而 HttpWebRequest.GetResponse 遇到 4xx 会抛异常，光看状态码会把
+  # 「已经起来了但没令牌」误判成失败。
+  $client = $null
+  try {
+    $client = New-Object Net.Sockets.TcpClient
+    $task = $client.ConnectAsync('127.0.0.1', $UiPort)
+    if ($task.Wait(800) -and $client.Connected) { $ready = $true }
+  } catch { } finally {
+    if ($client) { try { $client.Close() } catch { } }
+  }
+  if ($ready) { break }
+}
+if (-not $ready) {
+  Write-Host ''
+  Write-Host ('  [失败] 配置页没有在 http://127.0.0.1:' + $UiPort + '/ 上起来。')
+  if ($proc.HasExited) {
+    Write-Host ('  服务进程已退出（退出码 ' + $proc.ExitCode + '）。最常见的原因：端口 ' + $UiPort + ' 被别的程序占着。')
+    Write-Host ('  关掉占用它的窗口，或换个端口重跑：build.cmd -UiPort ' + ($UiPort + 1))
+  } else {
+    Write-Host '  服务进程还在跑但暂时没响应；稍等几秒后手动打开上面的地址试试。'
+  }
+  exit 1
+}
 
 Write-Host ''
-Write-Host '  图形向导已经启动（浏览器里是 127.0.0.1 的本地页面）。'
+Write-Host ('  图形向导已经启动：http://127.0.0.1:' + $UiPort + '/')
 Write-Host '  流程：设置口令 → 添加站点与密钥 → 选版本安装 → 启动 dsh。'
 Write-Host '  也可以随时用 dsh-ui.cmd 重新打开这个页面；命令行维护台是 tools\rescue\dsh-config.cmd。'
 Write-Host ''
