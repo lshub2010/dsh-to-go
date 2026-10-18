@@ -423,6 +423,25 @@ namespace DshToGo
             return neg ? -v : v;
         }
 
+
+        // 无边框窗口默认没有 WS_MAXIMIZEBOX / WS_SYSMENU 这些位，
+        // 系统就认为"这个窗口不能最大化"，于是双击标题栏（我们命中测试返回的 HTCAPTION）
+        // 什么都不会发生。把位补回来：窗口边框依然不画（FormBorderStyle.None），
+        // 但双击最大化、Alt+Space 系统菜单、拖到边缘 Snap 都恢复成系统原生行为。
+        private const int WS_MAXIMIZEBOX = 0x00010000;
+        private const int WS_MINIMIZEBOX = 0x00020000;
+        private const int WS_SYSMENU = 0x00080000;
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                cp.Style |= WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU;
+                return cp;
+            }
+        }
+
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
