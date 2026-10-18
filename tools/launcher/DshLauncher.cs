@@ -201,6 +201,40 @@ namespace DshToGo
     {
         private const int SW_RESTORE = 9;
 
+        // 原生标题栏默认是浅色的，和深色 Fluent 页面接在一起像两个应用。
+        // 用 DWM 把标题栏/边框/文字染成页面的深色，视觉上就连成一片了。
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
+        private static void PaintDarkChrome(IntPtr hwnd)
+        {
+            if (hwnd == IntPtr.Zero) return;
+            int on = 1;
+            // 20 = DWMWA_USE_IMMERSIVE_DARK_MODE（Win10 2004+）；19 是旧版编号
+            if (DwmSetWindowAttribute(hwnd, 20, ref on, sizeof(int)) != 0)
+            {
+                DwmSetWindowAttribute(hwnd, 19, ref on, sizeof(int));
+            }
+            int caption = 0x1F1F1F;   // = --colorNeutralBackground2，和页面顶栏同色
+            int text = 0xFFFFFF;
+            int border = 0x3D3D3D;    // = --colorNeutralStroke3
+            DwmSetWindowAttribute(hwnd, 35, ref caption, sizeof(int));  // DWMWA_CAPTION_COLOR（Win11）
+            DwmSetWindowAttribute(hwnd, 36, ref text, sizeof(int));     // DWMWA_TEXT_COLOR
+            DwmSetWindowAttribute(hwnd, 34, ref border, sizeof(int));   // DWMWA_BORDER_COLOR
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            PaintDarkChrome(Handle);
+        }
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            PaintDarkChrome(Handle);   // 某些 DWM 主题在显示后才认颜色
+        }
+
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
 
