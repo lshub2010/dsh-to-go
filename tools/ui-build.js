@@ -25,7 +25,7 @@ const OUT = path.join(ROOT, 'ui', 'app.html');
 const FLUENT_DIR = path.join(ROOT, 'third_party', 'fluent');
 
 const read = (p, dflt) => { try { return fs.readFileSync(p, 'utf8'); } catch (e) { if (dflt !== undefined) return dflt; throw new Error('缺少文件：' + path.relative(ROOT, p)); } };
-const SECTIONS = ['overview', 'sites', 'upgrade', 'diag', 'plugins'];
+const SECTIONS = ['overview', 'sites', 'upgrade', 'diag', 'plugins', 'launcher'];
 
 function build() {
   const head = read(path.join(SRC, 'head.html'));

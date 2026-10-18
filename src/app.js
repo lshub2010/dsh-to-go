@@ -831,6 +831,9 @@ function applyAppearance(a, persist) {
   if (el('ap-accent')) el('ap-accent').value = accent;
   if (el('ap-motion')) el('ap-motion').value = motion;
   if (el('ap-theme')) el('ap-theme').value = h.dataset.theme === 'light' ? 'light' : 'dark';
+  document.querySelectorAll('#launcher-swatches button').forEach((b) => {
+    b.setAttribute('aria-pressed', b.dataset.accent === accent ? 'true' : 'false');
+  });
   if (persist) api("/api/prefs", { appearance: { bg: bg, accent: accent, motion: motion } }).catch(() => {});
 }
 if (el('ap-theme')) {
@@ -840,7 +843,12 @@ if (el('ap-theme')) {
     if (el('ap-out')) flash('ap-out', '已应用', 'ok');
   };
   el('ap-bg').addEventListener('change', saveAp);
-  el('ap-accent').addEventListener('change', saveAp);
+  document.querySelectorAll('#launcher-swatches button').forEach((b) => {
+    b.addEventListener('click', () => {
+      el('ap-accent').value = b.dataset.accent;
+      saveAp();
+    });
+  });
   el('ap-motion').addEventListener('change', saveAp);
 }
 
