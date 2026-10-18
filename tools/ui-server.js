@@ -76,6 +76,22 @@ const PORT = parseInt(flag('--port', '3181'), 10);
 const TOKEN = crypto.randomBytes(24).toString('base64url');
 const NO_OPEN = argv.includes('--no-open');
 
+// 启动器（原生窗口）会把自己的 pid 传进来：它一死（包括被任务管理器强杀），
+// 本服务几秒内也退出，不留孤儿服务。dsh 是独立子进程，不跟着退出——
+// 这和「关窗时选择让 dsh 在后台继续」是同一套语义。
+const LAUNCHER_PID = parseInt(process.env.DSH_LAUNCHER_PID || '', 10) || 0;
+if (LAUNCHER_PID > 0) {
+  const launcherWatch = setInterval(() => {
+    let alive = true;
+    try { process.kill(LAUNCHER_PID, 0); } catch (e) { alive = !!e && e.code === 'EPERM'; }
+    if (!alive) {
+      console.log('  【启动器已退出】配置服务随之退出（dsh 不受影响）');
+      process.exit(0);
+    }
+  }, 3000);
+  launcherWatch.unref();
+}
+
 // ---------------------------------------------------------------- 口令会话
 // 口令只活在这个进程的内存里：页面用 /api/login 交一次，之后凡是「碰密钥 / 启停 dsh /
 // 跑安装任务」的操作都要求已登录。进程一退，口令就没了（这正是设计目标）。

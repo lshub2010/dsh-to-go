@@ -1,0 +1,24 @@
+<header>
+  <h1>
+    <svg class="app-mark" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+      <rect x="2.5" y="4.5" width="19" height="15" rx="3.5"/>
+      <path d="M6.5 9.5h11M6.5 13h7"/>
+    </svg>
+    <span class="app-title">便携版 DeepSeek Harness</span>
+    <span class="sub" id="hdr-sub">正在读取状态…</span>
+  </h1>
+  <div class="row hdr-actions">
+    <span class="pill" id="hdr-login"><span class="dot off"></span> 未解锁</span>
+    <button class="btn" id="btn-logout" hidden>退出解锁</button>
+  </div>
+</header>
+
+<nav role="tablist" aria-label="功能分区">
+  <button role="tab" data-tab="overview" aria-selected="true">概览</button>
+  <button role="tab" data-tab="sites" aria-selected="false">站点和模型</button>
+  <button role="tab" data-tab="upgrade" aria-selected="false">升级</button>
+  <button role="tab" data-tab="diag" aria-selected="false">诊断</button>
+  <button role="tab" data-tab="plugins" aria-selected="false">插件</button>
+</nav>
+
+<div id="banner" hidden></div>

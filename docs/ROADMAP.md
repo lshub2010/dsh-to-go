@@ -356,6 +356,13 @@ dsh 当场报 `ValidationError: $.providers.<站点>.models[0].contextWindow exp
 
 ## 6. 风险与回退
 
+- **启动器起不来**：`dsh-ui.cmd` 是永远可用的回退路径（启动器在缺 .NET/WebView2 时会自动改走它）；
+  启动器自己的日志在 `data\logs\launcher.log`（只记令牌长度，不记令牌）。
+- **启动器被强杀**：壳把 pid 交给 ui-server（`DSH_LAUNCHER_PID`），壳一死 ui-server 3 秒内自退，不留孤儿服务；
+  dsh 不跟着死（等价于「关窗时选择后台继续」）。
+- **页面视觉回归**：`ui\app.html` 是 `src\` 的生成物，改完必须跑 `tools\ui-build.js` + `tests\page-check.js`；
+  内联的 Fluent bundle 用 `/*{{FLUENT_BUNDLE_BEGIN}}*/` 圈起来，zero-external-link 检查不计其内部注释。
+
 - **装到一半拔盘**：任务状态在 `data\jobs\` 里，重开后可见失败原因；指针未切换即等于没升级。
 - **覆盖层写坏**：每次写前备份到 `backups\overlay-<时间>.yml`，并提供「回滚到上一个覆盖层」。
 - **口令遗忘**：无法找回（这是设计目标）；界面明确提示，并允许「删除全部密钥重设」。
