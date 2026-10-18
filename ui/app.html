@@ -47,7 +47,7 @@ nav button{display:flex;align-items:center;gap:6px;min-height:40px;background:tr
   color:var(--muted);padding:8px 14px;border-radius:var(--r);transition:background var(--t-fast) var(--e-out),color var(--t-fast) var(--e-out),border-color var(--t-fast) var(--e-out)}
 nav button:hover{background:var(--primary);color:var(--fg)}
 nav button[aria-selected="true"]{background:var(--primary);border-color:var(--border);color:var(--fg);font-weight:600}
-main{padding:16px 22px 72px;max-width:1440px;margin:0 auto}
+main{padding:22px 40px 84px;max-width:none;margin:0}
 section[hidden]{display:none}
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;margin-bottom:var(--gap)}
 .card.tight{padding:12px 14px}
@@ -1040,6 +1040,184 @@ main { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; }
 
 /* 布局自适应由各分区自己的 <style> 处理（它们的 ID 选择器优先级更高） */
 
+/* ---- 窗口变窄时不能"塌成两行" ----
+   1) 菜单栏：永远单行，放不下就横向滚动（不换行、不叠行）；
+   2) 顶栏：标题固定，说明文字可省略号截断，右侧按钮不放宽。 */
+nav { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+nav::-webkit-scrollbar { display: none; }
+nav button { flex: 0 0 auto; }
+header h1 { flex: 1 1 auto; min-width: 0; }
+header h1 .app-title { flex: 0 0 auto; }
+header h1 .sub { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+header h1 .pill { flex: 0 0 auto; }
+header .hdr-actions { flex: 0 0 auto; }
+
+/* ===== 外观层（src/appearance.css）：流体背景 / 主色 / 动效 ===== */
+/* ===========================================================================
+   外观层（src/appearance.css）
+   1) 流体渐变背景（可关）
+   2) 主色 / 动效强度（可切换，存 data/ui-prefs.json）
+   3) 全局过渡与微动效（跟随"动效"设置）
+   =========================================================================== */
+
+/* ---------- 流体渐变背景：两块缓慢漂移的模糊色斑 ---------- */
+body::before,
+body::after {
+  content: '';
+  position: fixed;
+  inset: -25%;
+  z-index: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+body::before {
+  background:
+    radial-gradient(38% 44% at 22% 26%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 70%),
+    radial-gradient(32% 38% at 78% 18%, color-mix(in srgb, var(--accent-2) 26%, transparent), transparent 72%);
+  filter: blur(64px) saturate(125%);
+  opacity: .55;
+  animation: bg-float-a 26s ease-in-out infinite alternate;
+}
+body::after {
+  background:
+    radial-gradient(34% 40% at 68% 80%, color-mix(in srgb, var(--accent-3) 24%, transparent), transparent 70%),
+    radial-gradient(28% 34% at 26% 72%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 72%);
+  filter: blur(72px) saturate(120%);
+  opacity: .45;
+  animation: bg-float-b 34s ease-in-out infinite alternate;
+}
+@keyframes bg-float-a {
+  from { transform: translate3d(-2%, -1%, 0) scale(1); }
+  to   { transform: translate3d(3%, 2%, 0) scale(1.12); }
+}
+@keyframes bg-float-b {
+  from { transform: translate3d(2%, 1%, 0) scale(1.06); }
+  to   { transform: translate3d(-3%, -2%, 0) scale(1); }
+}
+/* 内容必须在色斑之上 */
+header, nav, main { position: relative; z-index: 1; }
+
+/* 背景关掉时只剩纯色 */
+html[data-bg="solid"] body::before,
+html[data-bg="solid"] body::after { display: none; }
+
+/* ---------- 主色预设（只换令牌，不动组件样式） ---------- */
+:root {
+  --accent: #22C55E; --on-accent: #0F172A;
+  --accent-2: #6366F1; --accent-3: #06B6D4;
+}
+html[data-theme="light"] {
+  --accent: #15803D; --on-accent: #FFFFFF;
+  --accent-2: #4F46E5; --accent-3: #0E7490;
+}
+html[data-accent="green"]  { --accent: #22C55E; --accent-2: #6366F1; --accent-3: #06B6D4; --on-accent: #0F172A; }
+html[data-accent="blue"]   { --accent: #3B82F6; --accent-2: #06B6D4; --accent-3: #8B5CF6; --on-accent: #04121F; }
+html[data-accent="purple"] { --accent: #A855F7; --accent-2: #6366F1; --accent-3: #EC4899; --on-accent: #12061F; }
+html[data-accent="orange"] { --accent: #F59E0B; --accent-2: #EF4444; --accent-3: #F97316; --on-accent: #1B0F02; }
+html[data-accent="cyan"]   { --accent: #06B6D4; --accent-2: #22C55E; --accent-3: #3B82F6; --on-accent: #03151A; }
+html[data-theme="light"][data-accent="green"]  { --accent: #15803D; --on-accent: #FFFFFF; }
+html[data-theme="light"][data-accent="blue"]   { --accent: #1D4ED8; --on-accent: #FFFFFF; }
+html[data-theme="light"][data-accent="purple"] { --accent: #7E22CE; --on-accent: #FFFFFF; }
+html[data-theme="light"][data-accent="orange"] { --accent: #B45309; --on-accent: #FFFFFF; }
+html[data-theme="light"][data-accent="cyan"]   { --accent: #0E7490; --on-accent: #FFFFFF; }
+
+/* ---------- 主题切换本身也做过渡（换肤不要"啪"地跳） ---------- */
+html, body, header, nav, .card, input, select, textarea, .btn, .pill, th, td, pre, code {
+  transition: background-color 220ms cubic-bezier(.22,.61,.36,1),
+              border-color 220ms cubic-bezier(.22,.61,.36,1),
+              color 220ms cubic-bezier(.22,.61,.36,1);
+}
+
+/* ---------- 把过渡补齐：按钮 / 输入 / 标签 / 行 / 折叠 ---------- */
+.btn {
+  transition: background-color 140ms cubic-bezier(.22,.61,.36,1),
+              border-color 140ms cubic-bezier(.22,.61,.36,1),
+              color 140ms cubic-bezier(.22,.61,.36,1),
+              box-shadow 180ms cubic-bezier(.22,.61,.36,1),
+              transform 140ms cubic-bezier(.22,.61,.36,1);
+}
+.btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+.btn:active:not(:disabled) { transform: translateY(0) scale(.985); box-shadow: none; }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.06); box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent); }
+
+input, select, textarea {
+  transition: border-color 140ms cubic-bezier(.22,.61,.36,1),
+              box-shadow 160ms cubic-bezier(.22,.61,.36,1),
+              background-color 140ms cubic-bezier(.22,.61,.36,1);
+}
+input:hover:not(:disabled), select:hover:not(:disabled), textarea:hover:not(:disabled) { border-color: var(--secondary); }
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+nav button {
+  position: relative;
+  transition: color 140ms, background-color 140ms, border-color 140ms;
+}
+nav button::after {
+  content: '';
+  position: absolute;
+  left: 14px; right: 14px; bottom: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 220ms cubic-bezier(.22,.61,.36,1);
+}
+nav button[aria-selected="true"]::after { transform: scaleX(1); }
+
+.pill { transition: color 180ms, border-color 180ms, background-color 180ms, box-shadow 180ms; }
+.pill:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+
+.card {
+  transition: border-color 180ms, background-color 180ms, box-shadow 220ms, transform 220ms;
+}
+.card:hover { border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); box-shadow: 0 8px 26px rgba(0,0,0,.16); }
+
+th, td { transition: background-color 140ms; }
+tbody tr { transition: background-color 140ms; }
+tbody tr:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+
+details > summary { cursor: pointer; transition: color 140ms; }
+details > summary:hover { color: var(--accent); }
+details[open] > .body { animation: unfold 200ms cubic-bezier(.22,.61,.36,1) both; }
+@keyframes unfold { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+/* 分区切换与卡片进入：略微错开，避免所有卡片同时出现 */
+main section:not([hidden]) { animation: rise 240ms cubic-bezier(.22,.61,.36,1) both; }
+main section:not([hidden]) > .card { animation: rise 260ms cubic-bezier(.22,.61,.36,1) both; }
+main section:not([hidden]) > .card:nth-child(2) { animation-delay: 40ms; }
+main section:not([hidden]) > .card:nth-child(3) { animation-delay: 80ms; }
+main section:not([hidden]) > .card:nth-child(4) { animation-delay: 110ms; }
+main section:not([hidden]) > .card:nth-child(5) { animation-delay: 140ms; }
+
+/* 进度/骨架类：给一点呼吸感 */
+.dot.on { animation: dot-breathe 2.4s ease-in-out infinite; }
+@keyframes dot-breathe { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+
+/* ---------- 动效强度 ---------- */
+html[data-motion="calm"] body::before,
+html[data-motion="calm"] body::after { animation-duration: 60s; opacity: .3; }
+html[data-motion="calm"] .card:hover { transform: none; box-shadow: none; }
+
+html[data-motion="off"] *,
+html[data-motion="off"] *::before,
+html[data-motion="off"] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+html[data-motion="off"] body::before,
+html[data-motion="off"] body::after { display: none; }
+
+/* 系统级"减少动态效果"优先 */
+@media (prefers-reduced-motion: reduce) {
+  body::before, body::after { animation: none !important; }
+  * { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+}
+
 </style>
 </head>
 
@@ -1100,7 +1278,7 @@ main { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; }
     /* 标签页用 section[hidden] 切换：ID 优先级会压过 section[hidden]{display:none}，必须显式补回 */
     #tab-overview[hidden]{display:none}
     /* 宽窗口排两列：卡片不再被拉成"左边一堆字、右边一片空" */
-    @media (min-width:1200px){
+    @media (min-width:1500px){
       #tab-overview{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
       #tab-overview > .card{margin-bottom:0;min-width:0}
       /* 尾部两张（密钥与站点、最近任务）整行铺开；注意 <style> 也算子元素，所以用 nth-last-child */
@@ -1207,6 +1385,46 @@ main { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; }
         <button class="btn ov-ghost" id="btn-switch">切到另一个槽（秒级回滚）</button>
       </div>
       <div class="flash" id="ov-slot-out"></div>
+    </div>
+
+    <!-- 外观：主题 / 背景 / 主色 / 动效强度（都存在 data/ui-prefs.json，跟盘走） -->
+    <div class="card ov-quiet" id="appearance-card">
+      <h2>外观<fluent-badge appearance="outline" size="small">可自定义</fluent-badge></h2>
+      <div class="row">
+        <div class="f">
+          <label for="ap-theme">主题</label>
+          <select id="ap-theme">
+            <option value="dark">深色</option>
+            <option value="light">浅色</option>
+          </select>
+        </div>
+        <div class="f">
+          <label for="ap-bg">背景</label>
+          <select id="ap-bg">
+            <option value="fluid">流体渐变</option>
+            <option value="solid">纯色</option>
+          </select>
+        </div>
+        <div class="f">
+          <label for="ap-accent">主色</label>
+          <select id="ap-accent">
+            <option value="green">森林绿</option>
+            <option value="blue">深海蓝</option>
+            <option value="purple">暮光紫</option>
+            <option value="orange">琥珀橙</option>
+            <option value="cyan">青碧</option>
+          </select>
+        </div>
+        <div class="f">
+          <label for="ap-motion">动效</label>
+          <select id="ap-motion">
+            <option value="full">完整</option>
+            <option value="calm">克制</option>
+            <option value="off">关闭</option>
+          </select>
+        </div>
+      </div>
+      <div class="flash" id="ap-out"></div>
     </div>
 
     <div class="card ov-quiet">
@@ -7033,6 +7251,61 @@ function pickedVersion() {
 }
 
 
+/* ---------------------------------------------------------------- 内容缩放
+   窗口变宽时把内容区整体放大（字/卡片/按钮一起），顶栏和菜单栏保持原尺寸。
+   基准 1180：1280 的窗口约 1.08，1600 约 1.36，1920 约 1.55（上限）。 */
+function applyContentZoom() {
+  const m = document.querySelector('main');
+  if (!m) return;
+  const w = document.documentElement.clientWidth || window.innerWidth;
+  let z = w / 1180;
+  if (z < 0.85) z = 0.85;
+  if (z > 1.55) z = 1.55;
+  m.style.zoom = z.toFixed(3);
+}
+applyContentZoom();
+let _zoomTimer = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(_zoomTimer);
+  _zoomTimer = setTimeout(applyContentZoom, 80);
+});
+
+
+/* ---------------------------------------------------------------- 外观选项
+   背景（流体渐变/纯色）、主色、动效强度；都存在服务端的 data/ui-prefs.json，
+   和主题一样跟盘走。换主色只覆盖 CSS 令牌，不改任何组件样式。 */
+const APPEARANCE = { bg: 'fluid', accent: 'green', motion: 'full' };
+const ACCENTS = ["green", "blue", "purple", "orange", "cyan"];
+const MOTIONS = ["full", "calm", "off"];
+function currentAppearance() {
+  const h = document.documentElement;
+  return { bg: h.dataset.bg || 'fluid', accent: h.dataset.accent || 'green', motion: h.dataset.motion || 'full' };
+}
+function applyAppearance(a, persist) {
+  const h = document.documentElement;
+  const bg = a && a.bg === 'solid' ? 'solid' : 'fluid';
+  const accent = ACCENTS.indexOf(a && a.accent) >= 0 ? a.accent : "green";
+  const motion = MOTIONS.indexOf(a && a.motion) >= 0 ? a.motion : "full";
+  h.dataset.bg = bg;
+  h.dataset.accent = accent;
+  h.dataset.motion = motion;
+  if (el('ap-bg')) el('ap-bg').value = bg;
+  if (el('ap-accent')) el('ap-accent').value = accent;
+  if (el('ap-motion')) el('ap-motion').value = motion;
+  if (el('ap-theme')) el('ap-theme').value = h.dataset.theme === 'light' ? 'light' : 'dark';
+  if (persist) api("/api/prefs", { appearance: { bg: bg, accent: accent, motion: motion } }).catch(() => {});
+}
+if (el('ap-theme')) {
+  el('ap-theme').addEventListener('change', () => { applyTheme(el('ap-theme').value, true); applyAppearance(null, false); });
+  const saveAp = () => {
+    applyAppearance({ bg: el("ap-bg").value, accent: el("ap-accent").value, motion: el("ap-motion").value }, true);
+    if (el('ap-out')) flash('ap-out', '已应用', 'ok');
+  };
+  el('ap-bg').addEventListener('change', saveAp);
+  el('ap-accent').addEventListener('change', saveAp);
+  el('ap-motion').addEventListener('change', saveAp);
+}
+
 /* ---------------------------------------------------------------- 自绘标题栏
    顶栏就是标题栏（和页面第一条 header 合并在一起），只在启动器宿主里出现；
    浏览器回退（dsh-ui.cmd）时不显示窗口按钮，用浏览器自己的标题栏。
@@ -7050,6 +7323,7 @@ function initTitlebar() {
   el('tb-close').addEventListener('click', () => post({ type: 'dsh.win.close' }));
   host.addEventListener('message', (ev) => {
     const d = ev.data || {};
+    if (d.type === 'dsh.zoom') { syncHit(); return; }   // 缩放变了，可拖动区边界要重新量
     if (d.type !== 'dsh.win.state') return;
     const b = el('tb-max');
     if (!b) return;
@@ -7097,8 +7371,14 @@ function applyTheme(theme, persist) {
 }
 async function loadTheme() {
   let saved = 'dark';
-  try { const p = await api('/api/prefs'); if (p && (p.theme === 'light' || p.theme === 'dark')) saved = p.theme; } catch (e) { /* 老服务没有这个接口 */ }
+  let appearance = null;
+  try {
+    const p = await api('/api/prefs');
+    if (p && (p.theme === 'light' || p.theme === 'dark')) saved = p.theme;
+    if (p && p.appearance) appearance = p.appearance;
+  } catch (e) { /* 老服务没有这个接口 */ }
   applyTheme(saved, false);
+  applyAppearance(appearance, false);
 }
 if (el('btn-theme')) {
   el('btn-theme').addEventListener('click', () => {

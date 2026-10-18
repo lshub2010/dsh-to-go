@@ -789,6 +789,61 @@ function pickedVersion() {
 }
 
 
+/* ---------------------------------------------------------------- 内容缩放
+   窗口变宽时把内容区整体放大（字/卡片/按钮一起），顶栏和菜单栏保持原尺寸。
+   基准 1180：1280 的窗口约 1.08，1600 约 1.36，1920 约 1.55（上限）。 */
+function applyContentZoom() {
+  const m = document.querySelector('main');
+  if (!m) return;
+  const w = document.documentElement.clientWidth || window.innerWidth;
+  let z = w / 1180;
+  if (z < 0.85) z = 0.85;
+  if (z > 1.55) z = 1.55;
+  m.style.zoom = z.toFixed(3);
+}
+applyContentZoom();
+let _zoomTimer = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(_zoomTimer);
+  _zoomTimer = setTimeout(applyContentZoom, 80);
+});
+
+
+/* ---------------------------------------------------------------- 外观选项
+   背景（流体渐变/纯色）、主色、动效强度；都存在服务端的 data/ui-prefs.json，
+   和主题一样跟盘走。换主色只覆盖 CSS 令牌，不改任何组件样式。 */
+const APPEARANCE = { bg: 'fluid', accent: 'green', motion: 'full' };
+const ACCENTS = ["green", "blue", "purple", "orange", "cyan"];
+const MOTIONS = ["full", "calm", "off"];
+function currentAppearance() {
+  const h = document.documentElement;
+  return { bg: h.dataset.bg || 'fluid', accent: h.dataset.accent || 'green', motion: h.dataset.motion || 'full' };
+}
+function applyAppearance(a, persist) {
+  const h = document.documentElement;
+  const bg = a && a.bg === 'solid' ? 'solid' : 'fluid';
+  const accent = ACCENTS.indexOf(a && a.accent) >= 0 ? a.accent : "green";
+  const motion = MOTIONS.indexOf(a && a.motion) >= 0 ? a.motion : "full";
+  h.dataset.bg = bg;
+  h.dataset.accent = accent;
+  h.dataset.motion = motion;
+  if (el('ap-bg')) el('ap-bg').value = bg;
+  if (el('ap-accent')) el('ap-accent').value = accent;
+  if (el('ap-motion')) el('ap-motion').value = motion;
+  if (el('ap-theme')) el('ap-theme').value = h.dataset.theme === 'light' ? 'light' : 'dark';
+  if (persist) api("/api/prefs", { appearance: { bg: bg, accent: accent, motion: motion } }).catch(() => {});
+}
+if (el('ap-theme')) {
+  el('ap-theme').addEventListener('change', () => { applyTheme(el('ap-theme').value, true); applyAppearance(null, false); });
+  const saveAp = () => {
+    applyAppearance({ bg: el("ap-bg").value, accent: el("ap-accent").value, motion: el("ap-motion").value }, true);
+    if (el('ap-out')) flash('ap-out', '已应用', 'ok');
+  };
+  el('ap-bg').addEventListener('change', saveAp);
+  el('ap-accent').addEventListener('change', saveAp);
+  el('ap-motion').addEventListener('change', saveAp);
+}
+
 /* ---------------------------------------------------------------- 自绘标题栏
    顶栏就是标题栏（和页面第一条 header 合并在一起），只在启动器宿主里出现；
    浏览器回退（dsh-ui.cmd）时不显示窗口按钮，用浏览器自己的标题栏。
@@ -806,6 +861,7 @@ function initTitlebar() {
   el('tb-close').addEventListener('click', () => post({ type: 'dsh.win.close' }));
   host.addEventListener('message', (ev) => {
     const d = ev.data || {};
+    if (d.type === 'dsh.zoom') { syncHit(); return; }   // 缩放变了，可拖动区边界要重新量
     if (d.type !== 'dsh.win.state') return;
     const b = el('tb-max');
     if (!b) return;
@@ -853,8 +909,14 @@ function applyTheme(theme, persist) {
 }
 async function loadTheme() {
   let saved = 'dark';
-  try { const p = await api('/api/prefs'); if (p && (p.theme === 'light' || p.theme === 'dark')) saved = p.theme; } catch (e) { /* 老服务没有这个接口 */ }
+  let appearance = null;
+  try {
+    const p = await api('/api/prefs');
+    if (p && (p.theme === 'light' || p.theme === 'dark')) saved = p.theme;
+    if (p && p.appearance) appearance = p.appearance;
+  } catch (e) { /* 老服务没有这个接口 */ }
   applyTheme(saved, false);
+  applyAppearance(appearance, false);
 }
 if (el('btn-theme')) {
   el('btn-theme').addEventListener('click', () => {

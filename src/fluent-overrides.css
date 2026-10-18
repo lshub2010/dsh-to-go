@@ -345,3 +345,15 @@ main { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; }
 /* 弹层（登录/任务详情）本来就 fixed，不受影响 */
 
 /* 布局自适应由各分区自己的 <style> 处理（它们的 ID 选择器优先级更高） */
+
+/* ---- 窗口变窄时不能"塌成两行" ----
+   1) 菜单栏：永远单行，放不下就横向滚动（不换行、不叠行）；
+   2) 顶栏：标题固定，说明文字可省略号截断，右侧按钮不放宽。 */
+nav { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+nav::-webkit-scrollbar { display: none; }
+nav button { flex: 0 0 auto; }
+header h1 { flex: 1 1 auto; min-width: 0; }
+header h1 .app-title { flex: 0 0 auto; }
+header h1 .sub { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+header h1 .pill { flex: 0 0 auto; }
+header .hdr-actions { flex: 0 0 auto; }

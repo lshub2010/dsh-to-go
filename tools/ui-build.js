@@ -36,6 +36,8 @@ function build() {
     read(path.join(FLUENT_DIR, 'fluent-theme.css'), '/* 未提供主题文件，使用 src/fluent-overrides.css 里的兜底变量 */'),
     '/* ===== Fluent 2 覆盖层（src/fluent-overrides.css）===== */',
     read(path.join(SRC, 'fluent-overrides.css'), ''),
+    '/* ===== 外观层（src/appearance.css）：流体背景 / 主色 / 动效 ===== */',
+    read(path.join(SRC, 'appearance.css'), ''),
   ].join('\n');
 
   if (!head.includes('<!--{{CSS}}-->')) throw new Error('src/head.html 缺少 CSS 占位 <!--{{CSS}}-->');

@@ -38,7 +38,7 @@ nav button{display:flex;align-items:center;gap:6px;min-height:40px;background:tr
   color:var(--muted);padding:8px 14px;border-radius:var(--r);transition:background var(--t-fast) var(--e-out),color var(--t-fast) var(--e-out),border-color var(--t-fast) var(--e-out)}
 nav button:hover{background:var(--primary);color:var(--fg)}
 nav button[aria-selected="true"]{background:var(--primary);border-color:var(--border);color:var(--fg);font-weight:600}
-main{padding:16px 22px 72px;max-width:1440px;margin:0 auto}
+main{padding:22px 40px 84px;max-width:none;margin:0}
 section[hidden]{display:none}
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;margin-bottom:var(--gap)}
 .card.tight{padding:12px 14px}
