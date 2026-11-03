@@ -11,7 +11,9 @@ if "%HERE:~-1%"=="\" set "HERE=%HERE:~0,-1%"
 
 set "NODE=%HERE%\runtime\node\node.exe"
 if not exist "%NODE%" (
-  echo   [ERROR] portable Node runtime not found: %NODE%
+  echo.
+  call "%HERE%\tools\say.cmd" missing-node "%NODE%"
+  echo.
   pause
   exit /b 1
 )
